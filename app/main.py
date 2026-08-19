@@ -4,4 +4,4 @@ app = FastAPI()
 
 @app.get("/")
 def root():
-    return {"message": "Welcome to Daniel Udoenang FastAPI base"}
+    return {"message": "Welcome to AI-CV-Generator API"}
