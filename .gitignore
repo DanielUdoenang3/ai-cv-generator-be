@@ -8,7 +8,8 @@ to-do.txt
 .claude/
 FIXES_REPORT_CLIENT.txt
 FIXES_REPORT_CLIENT_V2.txt
-
+.env
+.venv/
 # C extensions
 *.so
 
@@ -193,3 +194,5 @@ localhost-key.pem
 localhost.pem
 migrations_old
 migrations_new
+
+yml.txt
