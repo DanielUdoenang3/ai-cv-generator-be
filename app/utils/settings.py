@@ -31,21 +31,27 @@ class Settings(BaseSettings):
     # SERVICE_ACCOUNT_JSON: str = config("SERVICE_ACCOUNT_JSON")
     
     # Cloudinary configurations
-    # CLOUDINARY_CLOUD_NAME: str = config("CLOUDINARY_CLOUD_NAME")
-    # CLOUDINARY_API_KEY: str = config("CLOUDINARY_API_KEY")
-    # CLOUDINARY_API_SECRET: str = config("CLOUDINARY_API_SECRET")
+    CLOUDINARY_CLOUD_NAME: str = config("CLOUDINARY_CLOUD_NAME")
+    CLOUDINARY_API_KEY: str = config("CLOUDINARY_API_KEY")
+    CLOUDINARY_API_SECRET: str = config("CLOUDINARY_API_SECRET")
 
     # REDIS configurations
-    # REDIS_HOST: str = config("REDIS_HOST")
-    # REDIS_PORT: str = config("REDIS_PORT")
-    # REDIS_URL: str = config("REDIS_URL")
-    # REDIS_PASSWORD: str = config("REDIS_PASSWORD")
+    REDIS_HOST: str = config("REDIS_HOST")
+    REDIS_PORT: str = config("REDIS_PORT")
+    REDIS_URL: str = config("REDIS_URL")
+    REDIS_PASSWORD: str = config("REDIS_PASSWORD")
     
     # Email configurations (Resend)
-    # RESEND_API_KEY: str = config("RESEND_API_KEY")
-    # FROM_EMAIL: str = config("FROM_EMAIL")
+    RESEND_API_KEY: str = config("RESEND_API_KEY")
+    FROM_EMAIL: str = config("FROM_EMAIL")
 
     # Dashboard
-    # DASHBOARD: str = config("DASHBOARD")
-    
+    DASHBOARD: str = config("DASHBOARD")
+
+    # AI-CV-GENERATOR
+    OPENAI_API_KEY: str = config("OPENAI_API_KEY")
+    OPENAI_MODEL: str = config("OPENAI_MODEL", default="gpt-4o")
+    GEMINI_API_KEY: str = config("GEMINI_API_KEY")
+    GEMINI_MODEL: str = config("GEMINI_MODEL", default="gemini-1.5-flash")
+
 settings = Settings()
