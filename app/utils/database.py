@@ -44,7 +44,7 @@ def get_db_engine(test_mode: bool = False):
         db_host = settings.DB_HOST or "localhost"
         db_port = settings.DB_PORT or 5432
         db_name = settings.DB_NAME or "ai_cv_generator"
-        candidate_url = f"postgresql://{db_user}:{db_pass}@{db_host}:{db_port}/{db_name}"
+        candidate_url = f"postgresql://{db_user}:{db_pass}@{db_host}:{db_port}/{db_name}?sslmode=require&channel_binding=require"
         DATABASE_URL = sanitize_db_url(candidate_url)
 
     # Final fallback: SQLite database to ensure the container never crashes at startup
