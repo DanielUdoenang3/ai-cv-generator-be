@@ -53,6 +53,6 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = config("GEMINI_MODEL", default="gemini-1.5-flash")
 
     # Cloudinary
-    CLOUDINARY_URL: str = config("CLOUDINARY_URL")
+    CLOUDINARY_URL: str = config("CLOUDINARY_URL", default="")
 
 settings = Settings()
