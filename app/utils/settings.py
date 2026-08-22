@@ -1,57 +1,55 @@
+import os
 from pydantic_settings import BaseSettings
 from decouple import config
 from pathlib import Path
 
 # Use this to build paths inside the project
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 class Settings(BaseSettings):
-    """Class to hold application's config values."""
+    """Class to hold application's config values with robust production defaults."""
 
-    SECRET_KEY: str = config("SECRET_KEY")
-    JWT_ALGORITHM: str = config("JWT_ALGORITHM")
-    ACCESS_TOKEN_EXPIRES_IN: int = config("ACCESS_TOKEN_EXPIRES_IN")
-    REFRESH_TOKEN_EXPIRES_IN: int = config("REFRESH_TOKEN_EXPIRES_IN")
+    SECRET_KEY: str = config("SECRET_KEY", default="super-secret-key-change-in-production")
+    JWT_ALGORITHM: str = config("JWT_ALGORITHM", default="HS256")
+    ACCESS_TOKEN_EXPIRES_IN: int = config("ACCESS_TOKEN_EXPIRES_IN", cast=int, default=86400)
+    REFRESH_TOKEN_EXPIRES_IN: int = config("REFRESH_TOKEN_EXPIRES_IN", cast=int, default=604800)
 
     # Database configurations
-    DB_HOST: str = config("DB_HOST")
-    DB_PORT: int = config("DB_PORT", cast=int)
-    DB_USER: str = config("DB_USER")
-    DB_PASSWORD: str = config("DB_PASSWORD")
-    DB_NAME: str = config("DB_NAME")
-    DB_TYPE: str = config("DB_TYPE")
-    DB_URL: str = config("DB_URL")
-
-    BASE_DIR:str = config("BASE_DIR")
+    DB_HOST: str = config("DB_HOST", default="localhost")
+    DB_PORT: int = config("DB_PORT", cast=int, default=5432)
+    DB_USER: str = config("DB_USER", default="postgres")
+    DB_PASSWORD: str = config("DB_PASSWORD", default="postgres")
+    DB_NAME: str = config("DB_NAME", default="ai_cv_generator")
+    DB_TYPE: str = config("DB_TYPE", default="postgresql")
     
-    # Paystack configurations
-    # PAYSTACK_SECRET_KEY: str = config("PAYSTACK_SECRET_KEY")
+    # Priority for single connection string: DB_URL -> DATABASE_URL -> POSTGRES_URL -> DATABASE_PUBLIC_URL
+    DB_URL: str = config("DB_URL", default=config("DATABASE_URL", default=config("POSTGRES_URL", default="")))
 
-    # Firebase / Google Auth
-    # SERVICE_ACCOUNT_JSON: str = config("SERVICE_ACCOUNT_JSON")
-    
+    BASE_DIR: str = config("BASE_DIR", default=str(BASE_DIR))
+
     # Cloudinary configurations
-    CLOUDINARY_CLOUD_NAME: str = config("CLOUDINARY_CLOUD_NAME")
-    CLOUDINARY_API_KEY: str = config("CLOUDINARY_API_KEY")
-    CLOUDINARY_API_SECRET: str = config("CLOUDINARY_API_SECRET")
+    CLOUDINARY_CLOUD_NAME: str = config("CLOUDINARY_CLOUD_NAME", default="")
+    CLOUDINARY_API_KEY: str = config("CLOUDINARY_API_KEY", default="")
+    CLOUDINARY_API_SECRET: str = config("CLOUDINARY_API_SECRET", default="")
+    CLOUDINARY_URL: str = config("CLOUDINARY_URL", default="")
 
     # REDIS configurations
-    REDIS_HOST: str = config("REDIS_HOST")
-    REDIS_PORT: str = config("REDIS_PORT")
-    REDIS_URL: str = config("REDIS_URL")
-    REDIS_PASSWORD: str = config("REDIS_PASSWORD")
-    
+    REDIS_HOST: str = config("REDIS_HOST", default="localhost")
+    REDIS_PORT: str = config("REDIS_PORT", default="6379")
+    REDIS_URL: str = config("REDIS_URL", default="")
+    REDIS_PASSWORD: str = config("REDIS_PASSWORD", default="")
+
     # Email configurations (Resend)
-    RESEND_API_KEY: str = config("RESEND_API_KEY")
-    FROM_EMAIL: str = config("FROM_EMAIL")
+    RESEND_API_KEY: str = config("RESEND_API_KEY", default="")
+    FROM_EMAIL: str = config("FROM_EMAIL", default="noreply@example.com")
 
     # Dashboard
-    DASHBOARD: str = config("DASHBOARD")
+    DASHBOARD: str = config("DASHBOARD", default="http://localhost:3000")
 
     # AI-CV-GENERATOR
-    OPENAI_API_KEY: str = config("OPENAI_API_KEY")
+    OPENAI_API_KEY: str = config("OPENAI_API_KEY", default="")
     OPENAI_MODEL: str = config("OPENAI_MODEL", default="gpt-4o")
-    GEMINI_API_KEY: str = config("GEMINI_API_KEY")
+    GEMINI_API_KEY: str = config("GEMINI_API_KEY", default="")
     GEMINI_MODEL: str = config("GEMINI_MODEL", default="gemini-1.5-flash")
 
     # Cloudinary
