@@ -74,3 +74,70 @@ def test_admin_send_chat_message(client):
     assert data["status_code"] == 201
     assert data["data"]["sender_type"] == "staff"
     assert data["data"]["message"] == "Hello Bob, we have started working on your CV draft."
+
+
+def test_admin_get_all_submissions_with_filters(client):
+    # 1. Create Super Admin
+    client.post("/api/v1/admin/auth/create-admin", json={
+        "first_name": "Filter",
+        "last_name": "Admin",
+        "email": "filteradmin@example.com",
+        "password": "Password123!",
+        "role": "super_admin"
+    })
+    login_res = client.post("/api/v1/admin/auth/login", json={
+        "email": "filteradmin@example.com",
+        "password": "Password123!"
+    })
+    headers = {"Authorization": f"Bearer {login_res.json()['data']['access_token']}"}
+
+    # 2. Create multiple submissions with different characteristics
+    # Sub1
+    client.post("/api/v1/public/submissions", json={
+        "first_name": "Alex",
+        "last_name": "Backend",
+        "email": "alex@example.com",
+        "target_position": "Backend Developer",
+        "target_company": "Stripe",
+        "priority": "high",
+        "raw_data": {"education": [], "experience": [], "skills": [], "certifications": []}
+    })
+    # Sub2
+    client.post("/api/v1/public/submissions", json={
+        "first_name": "Betty",
+        "last_name": "Frontend",
+        "email": "betty@example.com",
+        "target_position": "Frontend Engineer",
+        "target_company": "Vercel",
+        "priority": "normal",
+        "raw_data": {"education": [], "experience": [], "skills": [], "certifications": []}
+    })
+
+    # Test Search (by name)
+    res_search = client.get("/api/v1/admin/submissions?search=Alex", headers=headers)
+    assert res_search.status_code == 200
+    data_search = res_search.json()["data"]
+    assert data_search["total"] == 1
+    assert data_search["submissions"][0]["client"]["first_name"] == "Alex"
+
+    # Test Search (by company)
+    res_search_company = client.get("/api/v1/admin/submissions?search=Vercel", headers=headers)
+    assert res_search_company.status_code == 200
+    data_search_company = res_search_company.json()["data"]
+    assert data_search_company["total"] == 1
+    assert data_search_company["submissions"][0]["client"]["first_name"] == "Betty"
+
+    # Test Search (by reference ID)
+    ref_id = data_search_company["submissions"][0]["reference_id"]
+    res_search_ref = client.get(f"/api/v1/admin/submissions?search={ref_id}", headers=headers)
+    assert res_search_ref.status_code == 200
+    data_search_ref = res_search_ref.json()["data"]
+    assert data_search_ref["total"] == 1
+
+    # Test Pagination (limit=1)
+    res_paginated = client.get("/api/v1/admin/submissions?limit=1&page=1", headers=headers)
+    assert res_paginated.status_code == 200
+    data_pag = res_paginated.json()["data"]
+    assert data_pag["limit"] == 1
+    assert len(data_pag["submissions"]) == 1
+    assert data_pag["total"] >= 2

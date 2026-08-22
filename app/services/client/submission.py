@@ -1,10 +1,12 @@
 from fastapi import status
 from sqlalchemy.orm import Session
 from uuid_extensions import uuid7
+from datetime import datetime, timezone
 
 from app.models.clients import Client
 from app.models.submissions import Submission
 from app.models.chats import Conversation
+from app.models.activities import SubmissionActivity
 from app.models.enums import SubmissionStatus
 from app.schema.submission import CreateSubmission
 from app.utils.custom_response import success_response, error_response
@@ -35,9 +37,18 @@ async def create_submission(data: CreateSubmission, db: Session):
     # --- Step 2: Create the Submission record ---
     access_token = str(uuid7())
 
+    # Generate sequential reference_id (SUB-YYYY-XXX)
+    current_year = datetime.now(timezone.utc).year
+    prefix = f"SUB-{current_year}-"
+    count = db.query(Submission).filter(Submission.reference_id.like(f"{prefix}%")).count()
+    reference_id = f"{prefix}{str(count + 1).zfill(3)}"
+
     submission = Submission(
         client_id=client.id,
+        reference_id=reference_id,
         target_position=data.target_position.strip(),
+        target_company=data.target_company.strip() if data.target_company else None,
+        priority=data.priority if data.priority else "normal",
         job_description=data.job_description,
         existing_cv_url=data.existing_cv_url,
         raw_data=data.raw_data.model_dump(),
@@ -51,6 +62,15 @@ async def create_submission(data: CreateSubmission, db: Session):
     # --- Step 3: Automatically open a conversation for this submission ---
     conversation = Conversation(submission_id=submission.id)
     db.add(conversation)
+
+    # --- Step 4: Log Initial Submission Activity ---
+    activity = SubmissionActivity(
+        submission_id=submission.id,
+        activity_type="submission_created",
+        title="Submission Created",
+        description="Client submitted CV request through the form",
+    )
+    db.add(activity)
 
     db.commit()
     db.refresh(submission)

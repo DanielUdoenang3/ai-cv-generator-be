@@ -1,9 +1,13 @@
+from typing import Optional
 from fastapi import status
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 
+from app.models.clients import Client
 from app.models.admins import Admin
 from app.models.submissions import Submission
 from app.models.chats import Conversation, Message
+from app.models.activities import SubmissionActivity
 from app.models.enums import SubmissionStatus, AdminRole, MessageSenderType
 from app.schema.submission import SubmissionStatusUpdate, SubmissionAssign
 from app.schema.chat import MessageCreate
@@ -15,15 +19,34 @@ def _serialize_submission(submission: Submission) -> dict:
     client = submission.client
     assigned_to = submission.assigned_to
 
+    # Sort activities by id descending (newest first, UUID7 is chronologically sortable)
+    activities = sorted(submission.activities, key=lambda a: a.id, reverse=True) if submission.activities else []
+    serialized_activities = [
+        {
+            "id": act.id,
+            "activity_type": act.activity_type,
+            "title": act.title,
+            "description": act.description,
+            "actor_id": act.actor_id,
+            "actor_name": act.actor.first_name + " " + act.actor.last_name if act.actor else None,
+            "created_at": act.created_at,
+        }
+        for act in activities
+    ]
+
     return {
         "id": submission.id,
+        "reference_id": submission.reference_id,
         "status": submission.status,
         "target_position": submission.target_position,
+        "target_company": submission.target_company,
+        "priority": submission.priority,
         "job_description": submission.job_description,
         "existing_cv_url": submission.existing_cv_url,
         "raw_data": submission.raw_data,
-        "created_at": str(submission.created_at),
-        "updated_at": str(submission.updated_at),
+        "created_at": submission.created_at,
+        "updated_at": submission.updated_at,
+        "activities": serialized_activities,
         "client": {
             "id": client.id,
             "first_name": client.first_name,
@@ -40,31 +63,87 @@ def _serialize_submission(submission: Submission) -> dict:
     }
 
 
-async def get_all_submissions(current_admin: Admin, db: Session):
+async def get_all_submissions(
+    current_admin: Admin,
+    db: Session,
+    page: int = 1,
+    limit: int = 10,
+    search: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    assigned_to_id: Optional[str] = None,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+):
     """
-    Super Admin / Admin: returns ALL submissions ordered by newest first.
-    Sub-Admin / Moderator: returns ONLY submissions assigned to their account.
+    Returns a paginated, filterable, and sortable list of submissions.
+    Super Admins/Admins can see all and filter by staff.
+    Sub-Admins/Moderators can only see submissions assigned to them.
     """
+    is_super = current_admin.role in [AdminRole.SUPER_ADMIN.value]
 
-    if current_admin.role in [AdminRole.SUPER_ADMIN.value]:
-        submissions = (
-            db.query(Submission)
-            .order_by(Submission.created_at.desc())
-            .all()
-        )
+    # Base query joining Client to enable searching on client details
+    query = db.query(Submission).outerjoin(Client, Submission.client_id == Client.id)
+
+    # Enforce RBAC
+    if not is_super:
+        query = query.filter(Submission.assigned_to_id == current_admin.id)
     else:
-        submissions = (
-            db.query(Submission)
-            .filter(Submission.assigned_to_id == current_admin.id)
-            .order_by(Submission.created_at.desc())
-            .all()
+        # Super admin filters by assigned staff member if provided
+        if assigned_to_id:
+            if assigned_to_id.lower() == "unassigned":
+                query = query.filter(Submission.assigned_to_id.is_(None))
+            else:
+                query = query.filter(Submission.assigned_to_id == assigned_to_id)
+
+    # Filter: search term (matches client details, target position, target company, or reference ID)
+    if search:
+        search_pattern = f"%{search}%"
+        query = query.filter(
+            or_(
+                Client.first_name.ilike(search_pattern),
+                Client.last_name.ilike(search_pattern),
+                Client.email.ilike(search_pattern),
+                Submission.target_position.ilike(search_pattern),
+                Submission.target_company.ilike(search_pattern),
+                Submission.reference_id.ilike(search_pattern),
+            )
         )
+
+    # Filter: status
+    if status_filter:
+        query = query.filter(Submission.status == status_filter)
+
+    # Sort
+    valid_sort_fields = {
+        "created_at": Submission.created_at,
+        "updated_at": Submission.updated_at,
+        "status": Submission.status,
+        "target_position": Submission.target_position,
+        "reference_id": Submission.reference_id,
+        "priority": Submission.priority,
+    }
+    sort_column = valid_sort_fields.get(sort_by, Submission.created_at)
+
+    if sort_order.lower() == "asc":
+        query = query.order_by(sort_column.asc())
+    else:
+        query = query.order_by(sort_column.desc())
+
+    # Pagination calculations
+    total = query.count()
+    pages = (total + limit - 1) // limit if total > 0 else 0
+    offset = (page - 1) * limit
+
+    submissions = query.offset(offset).limit(limit).all()
 
     return success_response(
         status_code=status.HTTP_200_OK,
         message="Submissions fetched successfully",
         data={
-            "total": len(submissions),
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "pages": pages,
             "submissions": [_serialize_submission(s) for s in submissions],
         },
     )
@@ -143,8 +222,30 @@ async def assign_submission(
     submission.assigned_to_id = data.assigned_to_id
 
     # Auto-escalate status from NEW to IN_PROGRESS on first assignment
+    status_escalated = False
     if submission.status == SubmissionStatus.NEW.value:
         submission.status = SubmissionStatus.IN_PROGRESS.value
+        status_escalated = True
+
+    # Log assignment activity
+    assign_activity = SubmissionActivity(
+        submission_id=submission.id,
+        activity_type="assigned",
+        title=f"Assigned to {target_admin.first_name} {target_admin.last_name}",
+        description="Submission assigned for review and processing",
+        actor_id=current_admin.id,
+    )
+    db.add(assign_activity)
+
+    if status_escalated:
+        status_activity = SubmissionActivity(
+            submission_id=submission.id,
+            activity_type="status_changed",
+            title="Status Changed to In Progress",
+            description="Work started on CV generation and optimization",
+            actor_id=current_admin.id,
+        )
+        db.add(status_activity)
 
     db.commit()
     db.refresh(submission)
@@ -194,6 +295,36 @@ async def update_submission_status(
             status_code=status.HTTP_400_BAD_REQUEST,
             message=f"Invalid status. Must be one of: {', '.join(valid_statuses)}",
         )
+
+    # Log status change activity
+    status_titles = {
+        "new": "New",
+        "in_progress": "In Progress",
+        "pending_client_input": "Pending Client Input",
+        "ai_generated": "AI Generated",
+        "review": "Review",
+        "completed": "Completed",
+        "rejected": "Rejected",
+    }
+    status_name = status_titles.get(data.status, data.status.replace("_", " ").title())
+
+    status_descriptions = {
+        "new": "Submission reverted to new status",
+        "in_progress": "Work started on CV generation and optimization",
+        "review": "Submission moved to review stage",
+        "completed": "CV generation completed and finalized",
+        "rejected": "Submission has been rejected",
+    }
+    description = status_descriptions.get(data.status, f"Submission status updated to {status_name}")
+
+    status_activity = SubmissionActivity(
+        submission_id=submission.id,
+        activity_type="status_changed",
+        title=f"Status Changed to {status_name}",
+        description=description,
+        actor_id=current_admin.id,
+    )
+    db.add(status_activity)
 
     submission.status = data.status
     db.commit()

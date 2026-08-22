@@ -7,7 +7,10 @@ class Submission(BaseModel):
     __tablename__ = "submissions"
 
     client_id: str = Column(String, ForeignKey("clients.id"), nullable=False)
+    reference_id: str = Column(String, unique=True, index=True, nullable=False)
     target_position: str = Column(String, nullable=False)
+    target_company: str = Column(String, nullable=True)
+    priority: str = Column(String, default="normal", nullable=False)
     job_description: str = Column(String, nullable=True)
     raw_data: dict = Column(JSON, nullable=True)  # stores education, experience, skills, certifications, etc.
     status: str = Column(String, default=SubmissionStatus.NEW.value, nullable=False)

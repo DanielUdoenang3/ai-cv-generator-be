@@ -7,7 +7,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.main import app
 from app.utils.database import Base, get_db
-from app.models import Admin, Client, Submission, Conversation, Message
+from app.models import Admin, Client, Submission, Conversation, Message, SubmissionActivity
 
 # Create in-memory SQLite database for testing
 SQLALCHEMY_TEST_DATABASE_URL = "sqlite:///:memory:"

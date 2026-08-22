@@ -1,5 +1,5 @@
 from typing import Optional, List
-from fastapi import Depends, Request, Form, File, UploadFile
+from fastapi import Depends, Request, Form, File, UploadFile, Query
 from sqlalchemy.orm import Session
 
 from app.utils.database import get_db
@@ -18,10 +18,27 @@ from app.services.admin.submission import (
 
 
 async def get_all_submissions_controller(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(10, ge=1, le=100, description="Items per page"),
+    search: Optional[str] = Query(None, description="Search term for client details or target role/ID"),
+    status: Optional[str] = Query(None, description="Filter submissions by status"),
+    assigned_to_id: Optional[str] = Query(None, description="Filter submissions by assigned staff ID"),
+    sort_by: str = Query("created_at", description="Field to sort by"),
+    sort_order: str = Query("desc", description="Sort direction (asc, desc)"),
     current_admin: Admin = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
-    return await get_all_submissions(current_admin=current_admin, db=db)
+    return await get_all_submissions(
+        current_admin=current_admin,
+        db=db,
+        page=page,
+        limit=limit,
+        search=search,
+        status_filter=status,
+        assigned_to_id=assigned_to_id,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
 
 
 async def get_single_submission_controller(

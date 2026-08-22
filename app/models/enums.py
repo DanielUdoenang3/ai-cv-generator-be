@@ -16,6 +16,7 @@ class SubmissionStatus(str, Enum):
     IN_PROGRESS = "in_progress"
     PENDING_CLIENT_INPUT = "pending_client_input"
     AI_GENERATED = "ai_generated"
+    REVIEW = "review"
     COMPLETED = "completed"
     REJECTED = "rejected"
 

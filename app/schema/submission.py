@@ -40,6 +40,8 @@ class CreateSubmission(BaseModel):
     email: EmailStr
     phone: Optional[str] = None
     target_position: str
+    target_company: Optional[str] = None
+    priority: Optional[str] = "normal"
     job_description: Optional[str] = None
     existing_cv_url: Optional[str] = None
     raw_data: CVDataSchema
@@ -56,10 +58,26 @@ class ClientResponse(BaseModel):
         from_attributes = True
 
 
+class ActivityLogResponse(BaseModel):
+    id: str
+    activity_type: str
+    title: str
+    description: Optional[str] = None
+    actor_id: Optional[str] = None
+    actor_name: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class SubmissionResponse(BaseModel):
     id: str
+    reference_id: str
     client: ClientResponse
     target_position: str
+    target_company: Optional[str] = None
+    priority: str
     job_description: Optional[str] = None
     existing_cv_url: Optional[str] = None
     raw_data: CVDataSchema
@@ -68,6 +86,7 @@ class SubmissionResponse(BaseModel):
     access_token: str
     created_at: datetime
     updated_at: datetime
+    activities: List[ActivityLogResponse] = []
 
     class Config:
         from_attributes = True
