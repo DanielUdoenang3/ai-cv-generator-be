@@ -54,4 +54,7 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = config("GEMINI_API_KEY")
     GEMINI_MODEL: str = config("GEMINI_MODEL", default="gemini-1.5-flash")
 
+    # Cloudinary
+    CLOUDINARY_URL: str = config("CLOUDINARY_URL")
+
 settings = Settings()

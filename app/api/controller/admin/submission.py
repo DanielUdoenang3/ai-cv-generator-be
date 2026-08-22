@@ -1,0 +1,96 @@
+from typing import Optional, List
+from fastapi import Depends, Request, Form, File, UploadFile
+from sqlalchemy.orm import Session
+
+from app.utils.database import get_db
+from app.models.admins import Admin
+from app.schema.submission import SubmissionStatusUpdate, SubmissionAssign
+from app.schema.chat import MessageCreate
+from app.services import get_current_admin, get_current_super_admin
+from app.services.admin.submission import (
+    get_all_submissions,
+    get_single_submission,
+    assign_submission,
+    update_submission_status,
+    get_submission_messages,
+    send_admin_message,
+)
+
+
+async def get_all_submissions_controller(
+    current_admin: Admin = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    return await get_all_submissions(current_admin=current_admin, db=db)
+
+
+async def get_single_submission_controller(
+    submission_id: str,
+    current_admin: Admin = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    return await get_single_submission(
+        submission_id=submission_id,
+        current_admin=current_admin,
+        db=db,
+    )
+
+
+async def assign_submission_controller(
+    submission_id: str,
+    data: SubmissionAssign,
+    current_admin: Admin = Depends(get_current_super_admin),
+    db: Session = Depends(get_db),
+):
+    return await assign_submission(
+        submission_id=submission_id,
+        data=data,
+        current_admin=current_admin,
+        db=db,
+    )
+
+
+async def update_submission_status_controller(
+    submission_id: str,
+    data: SubmissionStatusUpdate,
+    current_admin: Admin = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    return await update_submission_status(
+        submission_id=submission_id,
+        data=data,
+        current_admin=current_admin,
+        db=db,
+    )
+
+
+async def get_submission_messages_controller(
+    submission_id: str,
+    current_admin: Admin = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    return await get_submission_messages(
+        submission_id=submission_id,
+        current_admin=current_admin,
+        db=db,
+    )
+
+
+async def send_admin_message_controller(
+    submission_id: str,
+    message: Optional[str] = Form(None),
+    files: Optional[List[UploadFile]] = File(None),
+    current_admin: Admin = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Clean admin chat message endpoint.
+    Accepts text message and/or direct file attachments (uploaded automatically to Cloudinary).
+    """
+    return await send_admin_message(
+        submission_id=submission_id,
+        current_admin=current_admin,
+        db=db,
+        message_text=message,
+        raw_files=files,
+    )
