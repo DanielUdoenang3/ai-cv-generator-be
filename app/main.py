@@ -23,6 +23,7 @@ origins = [
     "https://ai-cv-generator-fe-1.onrender.com",
     "https://admin-ai-cv-generator-fe.onrender.com",
     "https://admin-ai-cv-generator-fe-1.onrender.com",
+    "https://ai-cv-generator-fe.onrender.com"
 ]
 
 app.add_middleware(
