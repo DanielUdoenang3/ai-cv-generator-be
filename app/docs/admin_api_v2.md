@@ -222,9 +222,13 @@ Returns a paginated, filterable, and searchable list of submissions.
 
 ### GET /api/v1/admin/submissions/{submission_id}
 ### PATCH /api/v1/admin/submissions/{submission_id}/assign
+### PATCH /api/v1/admin/submissions/{submission_id}/unassign
 ### PATCH /api/v1/admin/submissions/{submission_id}/status
 
 These endpoints continue to return the full submission detail object (with activities and raw data) shown in the **Submission Object — What Changed** section.
+
+#### PATCH /api/v1/admin/submissions/{submission_id}/unassign
+Clears the assignment, setting `assigned_to` to `null`. It creates a `"Submission Unassigned"` audit activity log in the timeline details. No request body is required.
 
 > See `admin_api.md` for original request body and error response details.
 

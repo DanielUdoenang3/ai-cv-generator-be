@@ -141,3 +141,74 @@ def test_admin_get_all_submissions_with_filters(client):
     assert data_pag["limit"] == 1
     assert len(data_pag["submissions"]) == 1
     assert data_pag["total"] >= 2
+
+
+def test_admin_unassign_submission(client):
+    # 1. Create and login Super Admin
+    client.post("/api/v1/admin/auth/create-admin", json={
+        "first_name": "Super",
+        "last_name": "Boss",
+        "email": "superbossunassign@example.com",
+        "password": "Password123!",
+        "role": "super_admin"
+    })
+    login_super = client.post("/api/v1/admin/auth/login", json={
+        "email": "superbossunassign@example.com",
+        "password": "Password123!"
+    })
+    super_headers = {"Authorization": f"Bearer {login_super.json()['data']['access_token']}"}
+
+    # 2. Create a Sub Admin via staff API
+    res_staff = client.post(
+        "/api/v1/admin/staff",
+        headers=super_headers,
+        json={
+            "first_name": "David",
+            "last_name": "Staff",
+            "email": "davidstaff@example.com",
+            "password": "Password123!",
+            "role": "sub_admin",
+            "phone": "+12345678",
+            "gender": "male"
+        }
+    )
+    staff_id = res_staff.json()["data"]["id"]
+
+    # 3. Create a public submission
+    res_sub = client.post("/api/v1/public/submissions", json={
+        "first_name": "Client",
+        "last_name": "Name",
+        "email": "client@example.com",
+        "target_position": "Developer",
+        "raw_data": {"education": [], "experience": [], "skills": []}
+    })
+    sub_id = res_sub.json()["data"]["submission_id"]
+
+    # 4. Assign submission to David
+    client.patch(
+        f"/api/v1/admin/submissions/{sub_id}/assign",
+        headers=super_headers,
+        json={"assigned_to_id": staff_id}
+    )
+
+    # Verify assignment is active
+    res_verify = client.get(f"/api/v1/admin/submissions/{sub_id}", headers=super_headers)
+    assert res_verify.json()["data"]["assigned_to"]["id"] == staff_id
+
+    # 5. Call unassign endpoint
+    res_unassign = client.patch(
+        f"/api/v1/admin/submissions/{sub_id}/unassign",
+        headers=super_headers
+    )
+    assert res_unassign.status_code == 200
+    assert res_unassign.json()["data"]["assigned_to"] is None
+
+    # 6. Verify audit activity log is created
+    res_details = client.get(f"/api/v1/admin/submissions/{sub_id}", headers=super_headers)
+    activities = res_details.json()["data"]["activities"]
+    unassign_act = next(
+        a for a in activities
+        if a["activity_type"] == "assigned" and "unassigned from this submission" in a["description"]
+    )
+    assert unassign_act is not None
+

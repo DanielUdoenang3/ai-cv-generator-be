@@ -3,6 +3,7 @@ from app.api.controller.admin.submission import (
     get_all_submissions_controller,
     get_single_submission_controller,
     assign_submission_controller,
+    unassign_submission_controller,
     update_submission_status_controller,
     get_submission_messages_controller,
     send_admin_message_controller,
@@ -38,6 +39,18 @@ admin_submission_router.add_api_route(
         "Assign or reassign a submission to a specific staff member. "
         "Restricted to Super Admin and Admin roles only. "
         "Automatically escalates status from 'new' to 'in_progress' on first assignment."
+    ),
+)
+
+admin_submission_router.add_api_route(
+    "/{submission_id}/unassign",
+    endpoint=unassign_submission_controller,
+    methods=["PATCH"],
+    summary="Unassign Submission",
+    description=(
+        "Clear the assignment of a submission (sets assigned_to_id to None). "
+        "Restricted to Super Admin and Admin roles only. "
+        "Adds an audit event to the activity timeline."
     ),
 )
 

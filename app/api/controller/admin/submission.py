@@ -11,6 +11,7 @@ from app.services.admin.submission import (
     get_all_submissions,
     get_single_submission,
     assign_submission,
+    unassign_submission,
     update_submission_status,
     get_submission_messages,
     send_admin_message,
@@ -110,4 +111,16 @@ async def send_admin_message_controller(
         db=db,
         message_text=message,
         raw_files=files,
+     )
+
+
+async def unassign_submission_controller(
+    submission_id: str,
+    current_admin: Admin = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    return await unassign_submission(
+        submission_id=submission_id,
+        current_admin=current_admin,
+        db=db,
     )

@@ -257,6 +257,58 @@ async def assign_submission(
     )
 
 
+async def unassign_submission(
+    submission_id: str,
+    current_admin: Admin,
+    db: Session,
+):
+    """
+    Clears the assignment of a submission (sets assigned_to_id to None).
+    Restricted to Super Admin and Admin roles only.
+    """
+    submission = db.query(Submission).filter(
+        Submission.id == submission_id
+    ).first()
+
+    if not submission:
+        return error_response(
+            status_code=status.HTTP_404_NOT_FOUND,
+            message="Submission not found",
+        )
+
+    old_admin_id = submission.assigned_to_id
+    if old_admin_id is None:
+        return success_response(
+            status_code=status.HTTP_200_OK,
+            message="Submission is already unassigned",
+            data=_serialize_submission(submission),
+        )
+
+    # Fetch old admin info for the audit description
+    old_admin = db.query(Admin).filter(Admin.id == old_admin_id).first()
+    old_admin_name = f"{old_admin.first_name} {old_admin.last_name}" if old_admin else "Unknown Admin"
+
+    submission.assigned_to_id = None
+
+    # Log unassignment activity
+    unassign_activity = SubmissionActivity(
+        submission_id=submission.id,
+        activity_type="assigned",
+        title="Submission Unassigned",
+        description=f"Staff member {old_admin_name} was unassigned from this submission by {current_admin.first_name} {current_admin.last_name}",
+        actor_id=current_admin.id,
+    )
+    db.add(unassign_activity)
+    db.commit()
+    db.refresh(submission)
+
+    return success_response(
+        status_code=status.HTTP_200_OK,
+        message="Submission successfully unassigned",
+        data=_serialize_submission(submission),
+    )
+
+
 async def update_submission_status(
     submission_id: str,
     data: SubmissionStatusUpdate,
