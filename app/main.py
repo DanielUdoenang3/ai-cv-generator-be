@@ -20,6 +20,7 @@ origins = [
     "http://localhost:5177",
     "https://ai-cv-generator-fe-1.onrender.com",
     "https://admin-ai-cv-generator-fe.onrender.com",
+    "https://admin-ai-cv-generator-fe-1.onrender.com",
 ]
 
 app.add_middleware(
