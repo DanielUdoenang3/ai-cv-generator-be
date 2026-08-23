@@ -3,6 +3,7 @@ from app.api.controller.admin.auth import (
     create_admin_controller,
     login_admin_controller,
     get_admin_profile_controller,
+    update_admin_profile_controller,
 )
 
 admin_auth_router = APIRouter(prefix="/auth", tags=["Admin Authentication"])
@@ -30,3 +31,12 @@ admin_auth_router.add_api_route(
     summary="Get Admin Profile",
     description="Get the profile of the authenticated admin",
 )
+
+admin_auth_router.add_api_route(
+    "/profile",
+    endpoint=update_admin_profile_controller,
+    methods=["PUT"],
+    summary="Update Admin Profile",
+    description="Update the profile of the authenticated admin",
+)
+

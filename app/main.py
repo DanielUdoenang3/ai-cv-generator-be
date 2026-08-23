@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.router.admin.auth import admin_auth_router
 from app.api.router.admin.submission import admin_submission_router
 from app.api.router.admin.dashboard import admin_dashboard_router
+from app.api.router.admin.staff import admin_staff_router
 from app.api.router.client.submission import client_router
 from app.api.router.client.upload import upload_router
 
@@ -31,6 +32,7 @@ app.add_middleware(
 app.include_router(admin_auth_router, prefix="/api/v1/admin")
 app.include_router(admin_submission_router, prefix="/api/v1/admin")
 app.include_router(admin_dashboard_router, prefix="/api/v1/admin")
+app.include_router(admin_staff_router, prefix="/api/v1/admin")
 app.include_router(client_router, prefix="/api/v1")
 app.include_router(upload_router, prefix="/api/v1/public")
 

@@ -52,3 +52,69 @@ def test_admin_login_invalid_password(client):
 def test_admin_profile_unauthorized(client):
     res = client.get("/api/v1/admin/auth/profile", headers={"Authorization": "Bearer invalid.jwt.token"})
     assert res.status_code == 401
+
+
+def test_admin_update_profile(client):
+    # 1. Create and login admin
+    client.post("/api/v1/admin/auth/create-admin", json={
+        "first_name": "OldName",
+        "last_name": "OldLast",
+        "email": "oldprofile@example.com",
+        "password": "Password123!",
+        "role": "sub_admin"
+    })
+    login_res = client.post("/api/v1/admin/auth/login", json={
+        "email": "oldprofile@example.com",
+        "password": "Password123!"
+    })
+    headers = {"Authorization": f"Bearer {login_res.json()['data']['access_token']}"}
+
+    # 2. Update profile (name, phone, gender)
+    res_update = client.put(
+        "/api/v1/admin/auth/profile",
+        headers=headers,
+        json={
+            "first_name": "NewName",
+            "last_name": "NewLast",
+            "phone": "+2348000000",
+            "gender": "male"
+        }
+    )
+    assert res_update.status_code == 200
+    update_data = res_update.json()["data"]
+    assert update_data["first_name"] == "NewName"
+    assert update_data["last_name"] == "NewLast"
+    assert update_data["phone"] == "+2348000000"
+    assert update_data["gender"] == "male"
+    assert update_data["role"] == "sub_admin"  # Role must not change!
+
+    # 3. Update email (success)
+    res_email = client.put(
+        "/api/v1/admin/auth/profile",
+        headers=headers,
+        json={"email": "newprofile@example.com"}
+    )
+    assert res_email.status_code == 200
+    email_data = res_email.json()["data"]
+    assert email_data["email"] == "newprofile@example.com"
+    assert "access_token" in email_data
+    
+    # Use the new token for subsequent requests
+    headers = {"Authorization": f"Bearer {email_data['access_token']}"}
+
+    # 4. Try updating email to an existing one (should fail)
+    client.post("/api/v1/admin/auth/create-admin", json={
+        "first_name": "Another",
+        "last_name": "Admin",
+        "email": "taken@example.com",
+        "password": "Password123!",
+        "role": "sub_admin"
+    })
+    res_fail = client.put(
+        "/api/v1/admin/auth/profile",
+        headers=headers,
+        json={"email": "taken@example.com"}
+    )
+    assert res_fail.status_code == 400
+    assert "already taken" in res_fail.json()["detail"]["message"]
+

@@ -2,7 +2,7 @@ from fastapi import status
 from app.models.admins import Admin
 from app.utils.custom_response import success_response, error_response
 from sqlalchemy.orm import Session
-from app.schema.auth import AdminLogin, CreateAdmin
+from app.schema.auth import AdminLogin, CreateAdmin, AdminProfileUpdate
 from app.utils.token import decode_access_token, create_access_token, create_refresh_token
 from app.utils.settings import settings
 from app.utils.pass_hash import verify_password, hash_password
@@ -139,4 +139,62 @@ async def get_admin_profile(db: Session, current_admin: Admin):
             "created_at": current_admin.created_at,
             "updated_at": current_admin.updated_at,
         }
+    )
+
+
+async def update_admin_profile(current_admin: Admin, data: AdminProfileUpdate, db: Session):
+    if not data:
+        return error_response(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            message="No update data provided",
+        )
+
+    email_changed = False
+    if data.email is not None:
+        email_lower = data.email.lower().strip()
+        if email_lower != current_admin.email:
+            existing_email = db.query(Admin).filter(Admin.email == email_lower).first()
+            if existing_email:
+                return error_response(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    message="Email is already taken by another admin",
+                )
+            current_admin.email = email_lower
+            email_changed = True
+
+    if data.first_name is not None:
+        current_admin.first_name = data.first_name.strip()
+    if data.last_name is not None:
+        current_admin.last_name = data.last_name.strip()
+    if data.phone is not None:
+        current_admin.phone = data.phone.strip()
+    if data.gender is not None:
+        current_admin.gender = data.gender
+
+    db.commit()
+    db.refresh(current_admin)
+
+    access_token = None
+    if email_changed:
+        access_token = create_access_token(data={"email": current_admin.email})
+
+    res_data = {
+        "id": current_admin.id,
+        "first_name": current_admin.first_name,
+        "last_name": current_admin.last_name,
+        "email": current_admin.email,
+        "role": current_admin.role,
+        "gender": current_admin.gender,
+        "phone": current_admin.phone,
+        "is_active": current_admin.is_active,
+        "created_at": current_admin.created_at,
+        "updated_at": current_admin.updated_at,
+    }
+    if access_token:
+        res_data["access_token"] = access_token
+
+    return success_response(
+        status_code=status.HTTP_200_OK,
+        message="Profile updated successfully",
+        data=res_data
     )

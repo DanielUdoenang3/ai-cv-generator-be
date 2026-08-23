@@ -529,3 +529,146 @@ function DashboardStats({ stats }) {
 | Using the old status list without `review` | Update your status dropdowns and filters to include `"review"` |
 | Assuming `target_company` is always set | It can be `null` — guard before rendering |
 | Hardcoding `priority` as a boolean | It's a string: `"low"`, `"normal"`, or `"high"` |
+
+---
+
+## 🆕 Admin Profile Update Endpoint
+
+### PUT /api/v1/admin/auth/profile
+
+Allows the authenticated admin to update their own profile details.
+
+**Requires `Authorization: Bearer <token>` header.**
+
+#### Request Body
+```json
+{
+  "first_name": "NewName",
+  "last_name": "NewLast",
+  "email": "newprofile@example.com",
+  "phone": "+2348000000",
+  "gender": "male"
+}
+```
+
+*Note: All fields are optional. Role cannot be changed.*
+
+#### Success Response — `200 OK`
+```json
+{
+  "status": "success",
+  "message": "Profile updated successfully",
+  "data": {
+    "id": "...",
+    "first_name": "NewName",
+    "last_name": "NewLast",
+    "email": "newprofile@example.com",
+    "role": "sub_admin",
+    "gender": "male",
+    "phone": "+2348000000",
+    "is_active": true,
+    "access_token": "🆕_jwt_token_here_if_email_changed"
+  }
+}
+```
+*Note: If the email changes, the response includes a new `access_token` since the JWT contains the email. The frontend must replace the active session token with this new one.*
+
+---
+
+## 🆕 Staff Management Endpoints
+
+---
+
+### GET /api/v1/admin/staff
+
+Returns a list of all staff members along with system-wide workload analytics.
+
+**Requires `Authorization: Bearer <token>` header.**
+
+#### Success Response — `200 OK`
+```json
+{
+  "status": "success",
+  "message": "Staff list fetched successfully",
+  "data": {
+    "stats": {
+      "total_staff": 3,
+      "active_members": 3,
+      "avg_workload": 2.7
+    },
+    "staff": [
+      {
+        "id": "...",
+        "first_name": "Sarah",
+        "last_name": "Johnson",
+        "email": "sarah@company.com",
+        "phone": "+12345678",
+        "gender": "female",
+        "role": "sub_admin",
+        "is_active": true,
+        "created_at": "2023-03-15T08:00:00.000Z",
+        "active_count": 4,
+        "completed_count": 32
+      }
+    ]
+  }
+}
+```
+
+---
+
+### POST /api/v1/admin/staff
+
+Creates a new staff/admin member.
+
+**Requires `Authorization: Bearer <token>` (Super Admin only).**
+
+#### Request Body
+```json
+{
+  "first_name": "Sarah",
+  "last_name": "Johnson",
+  "email": "sarah@company.com",
+  "password": "Password123!",
+  "role": "sub_admin",
+  "phone": "+12345678",
+  "gender": "female"
+}
+```
+
+#### Success Response — `200 OK`
+```json
+{
+  "status": "success",
+  "message": "Staff member created successfully",
+  "data": {
+    "id": "...",
+    "first_name": "Sarah",
+    "last_name": "Johnson",
+    "email": "sarah@company.com",
+    "role": "sub_admin",
+    "gender": "female",
+    "phone": "+12345678",
+    "is_active": true
+  }
+}
+```
+
+---
+
+### DELETE /api/v1/admin/staff/{staff_id}
+
+Deletes a staff/admin member. 
+
+**Requires `Authorization: Bearer <token>` (Super Admin only).**
+
+*Self-deletion is blocked. When a staff member is deleted, any submissions assigned to them are automatically unassigned (`assigned_to_id` set to `None`), and an audit log event is added to their activity history.*
+
+#### Success Response — `200 OK`
+```json
+{
+  "status": "success",
+  "message": "Staff member deleted successfully"
+}
+```
+

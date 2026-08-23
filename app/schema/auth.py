@@ -15,13 +15,9 @@ class CreateAdmin(BaseModel):
     phone: Optional[str] = None
     gender: Optional[str] = None
 
-# class AdminUpdate(BaseModel):
-#     first_name: Optional[str] = None
-#     last_name: Optional[str] = None
-#     email: Optional[EmailStr] = None
-#     password: Optional[str] = None
-#     role: Optional[str] = None
-#     phone: Optional[str] = None
-#     gender: Optional[str] = None
-#     is_active: Optional[bool] = None
-#     last_login: Optional[datetime] = None
+class AdminProfileUpdate(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    gender: Optional[str] = None
