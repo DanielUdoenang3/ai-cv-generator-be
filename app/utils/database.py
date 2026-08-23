@@ -80,7 +80,7 @@ def create_database():
 
 
 def get_db():
-    db = db_session()
+    db = SessionLocal()
     try:
         yield db
     finally:
