@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.utils.database import get_db
 from app.models.admins import Admin
 from app.schema.submission import SubmissionStatusUpdate, SubmissionAssign
-from app.schema.chat import MessageCreate
+from app.schema.chat import MessageCreate, MessageEdit
 from app.services import get_current_admin, get_current_super_admin
 from app.services.admin.submission import (
     get_all_submissions,
@@ -15,6 +15,9 @@ from app.services.admin.submission import (
     update_submission_status,
     get_submission_messages,
     send_admin_message,
+    edit_admin_message,
+    delete_admin_message,
+    mark_admin_messages_read,
 )
 
 
@@ -120,6 +123,51 @@ async def unassign_submission_controller(
     db: Session = Depends(get_db),
 ):
     return await unassign_submission(
+        submission_id=submission_id,
+        current_admin=current_admin,
+        db=db,
+    )
+
+
+async def edit_admin_message_controller(
+    submission_id: str,
+    message_id: str,
+    data: MessageEdit,
+    current_admin: Admin = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """Edit a staff message. Sub-admins can only edit their own messages."""
+    return await edit_admin_message(
+        submission_id=submission_id,
+        message_id=message_id,
+        data=data,
+        current_admin=current_admin,
+        db=db,
+    )
+
+
+async def delete_admin_message_controller(
+    submission_id: str,
+    message_id: str,
+    current_admin: Admin = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """Delete any message in the conversation. Sub-admins restricted to assigned submissions."""
+    return await delete_admin_message(
+        submission_id=submission_id,
+        message_id=message_id,
+        current_admin=current_admin,
+        db=db,
+    )
+
+
+async def mark_admin_read_controller(
+    submission_id: str,
+    current_admin: Admin = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """Mark all unread client messages as read."""
+    return await mark_admin_messages_read(
         submission_id=submission_id,
         current_admin=current_admin,
         db=db,

@@ -1,5 +1,7 @@
-from typing import Optional
-from fastapi import status
+from datetime import datetime, timezone
+from typing import Optional, List, Any
+
+from fastapi import status, UploadFile
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
@@ -10,8 +12,10 @@ from app.models.chats import Conversation, Message
 from app.models.activities import SubmissionActivity
 from app.models.enums import SubmissionStatus, AdminRole, MessageSenderType
 from app.schema.submission import SubmissionStatusUpdate, SubmissionAssign
-from app.schema.chat import MessageCreate
+from app.schema.chat import MessageCreate, MessageEdit
+from app.utils.cloudinary import upload_multiple_files_to_cloudinary
 from app.utils.custom_response import success_response, error_response
+from app.utils.websocket_manager import manager
 
 
 def _serialize_submission(submission: Submission) -> dict:
@@ -250,6 +254,20 @@ async def assign_submission(
     db.commit()
     db.refresh(submission)
 
+    # Broadcast assignment event
+    await manager.broadcast_to_submission(submission_id, {
+        "event": "submission_assigned",
+        "data": {
+            "submission_id": submission_id,
+            "assigned_to": {
+                "id": target_admin.id,
+                "name": f"{target_admin.first_name} {target_admin.last_name}",
+                "role": target_admin.role,
+            },
+            "status_escalated": status_escalated,
+        },
+    })
+
     return success_response(
         status_code=status.HTTP_200_OK,
         message=f"Submission successfully assigned to {target_admin.first_name} {target_admin.last_name}",
@@ -301,6 +319,15 @@ async def unassign_submission(
     db.add(unassign_activity)
     db.commit()
     db.refresh(submission)
+
+    # Broadcast unassignment event
+    await manager.broadcast_to_submission(submission_id, {
+        "event": "submission_assigned",
+        "data": {
+            "submission_id": submission_id,
+            "assigned_to": None,
+        },
+    })
 
     return success_response(
         status_code=status.HTTP_200_OK,
@@ -378,9 +405,21 @@ async def update_submission_status(
     )
     db.add(status_activity)
 
+    old_status = submission.status
     submission.status = data.status
     db.commit()
     db.refresh(submission)
+
+    # Broadcast status change event
+    await manager.broadcast_to_submission(submission_id, {
+        "event": "submission_status_changed",
+        "data": {
+            "submission_id": submission_id,
+            "old_status": old_status,
+            "new_status": submission.status,
+            "changed_by": f"{current_admin.first_name} {current_admin.last_name}",
+        },
+    })
 
     return success_response(
         status_code=status.HTTP_200_OK,
@@ -411,7 +450,6 @@ async def get_submission_messages(
 
     is_restricted = current_admin.role in [
         AdminRole.SUB_ADMIN.value,
-        AdminRole.MODERATOR.value,
     ]
     if is_restricted and submission.assigned_to_id != current_admin.id:
         return error_response(
@@ -545,10 +583,9 @@ async def send_admin_message(
     db.commit()
     db.refresh(message)
 
-    return success_response(
-        status_code=status.HTTP_201_CREATED,
-        message="Message sent successfully",
-        data={
+    payload = {
+        "event": "new_message",
+        "data": {
             "id": message.id,
             "sender_type": message.sender_type,
             "sender_name": f"{current_admin.first_name} {current_admin.last_name}",
@@ -556,5 +593,199 @@ async def send_admin_message(
             "attachments": message.attachments,
             "is_read": message.is_read,
             "created_at": str(message.created_at),
+            "updated_at": str(message.updated_at),
         },
+    }
+    await manager.broadcast_to_submission(submission_id, payload)
+
+    return success_response(
+        status_code=status.HTTP_201_CREATED,
+        message="Message sent successfully",
+        data=payload["data"],
+    )
+
+
+# ---------------------------------------------------------------------------
+# EDIT ADMIN MESSAGE
+# ---------------------------------------------------------------------------
+
+async def edit_admin_message(
+    submission_id: str,
+    message_id: str,
+    data: MessageEdit,
+    current_admin: Admin,
+    db: Session,
+):
+    """
+    Allows staff to edit a message they personally sent.
+    Super admins can edit any staff message.
+    Broadcasts 'message_updated' WebSocket event.
+    """
+    submission = db.query(Submission).filter(Submission.id == submission_id).first()
+    if not submission:
+        return error_response(status_code=status.HTTP_404_NOT_FOUND, message="Submission not found")
+
+    is_restricted = current_admin.role in [AdminRole.SUB_ADMIN.value]
+    if is_restricted and submission.assigned_to_id != current_admin.id:
+        return error_response(
+            status_code=status.HTTP_403_FORBIDDEN,
+            message="You do not have permission to edit messages in this submission",
+        )
+
+    conversation = db.query(Conversation).filter(
+        Conversation.submission_id == submission_id
+    ).first()
+    if not conversation:
+        return error_response(status_code=status.HTTP_404_NOT_FOUND, message="No conversation found")
+
+    # Staff can only edit their own messages; super_admin can edit any staff message
+    filter_query = db.query(Message).filter(
+        Message.id == message_id,
+        Message.conversation_id == conversation.id,
+        Message.sender_type == MessageSenderType.STAFF.value,
+    )
+    if is_restricted:
+        filter_query = filter_query.filter(Message.sender_id == current_admin.id)
+
+    message = filter_query.first()
+    if not message:
+        return error_response(
+            status_code=status.HTTP_404_NOT_FOUND,
+            message="Message not found or you do not have permission to edit it",
+        )
+
+    new_text = data.message.strip()
+    if not new_text:
+        return error_response(status_code=status.HTTP_400_BAD_REQUEST, message="Message text cannot be empty")
+
+    message.message = new_text
+    db.commit()
+    db.refresh(message)
+
+    payload = {
+        "event": "message_updated",
+        "data": {
+            "id": message.id,
+            "message": message.message,
+            "updated_at": str(message.updated_at),
+        },
+    }
+    await manager.broadcast_to_submission(submission_id, payload)
+
+    return success_response(
+        status_code=status.HTTP_200_OK,
+        message="Message updated successfully",
+        data=payload["data"],
+    )
+
+
+# ---------------------------------------------------------------------------
+# DELETE ADMIN MESSAGE
+# ---------------------------------------------------------------------------
+
+async def delete_admin_message(
+    submission_id: str,
+    message_id: str,
+    current_admin: Admin,
+    db: Session,
+):
+    """
+    Allows staff to delete any message in the conversation (moderation power).
+    Sub-admins restricted to their assigned submissions.
+    Broadcasts 'message_deleted' WebSocket event.
+    """
+    submission = db.query(Submission).filter(Submission.id == submission_id).first()
+    if not submission:
+        return error_response(status_code=status.HTTP_404_NOT_FOUND, message="Submission not found")
+
+    is_restricted = current_admin.role in [AdminRole.SUB_ADMIN.value]
+    if is_restricted and submission.assigned_to_id != current_admin.id:
+        return error_response(
+            status_code=status.HTTP_403_FORBIDDEN,
+            message="You do not have permission to delete messages in this submission",
+        )
+
+    conversation = db.query(Conversation).filter(
+        Conversation.submission_id == submission_id
+    ).first()
+    if not conversation:
+        return error_response(status_code=status.HTTP_404_NOT_FOUND, message="No conversation found")
+
+    message = db.query(Message).filter(
+        Message.id == message_id,
+        Message.conversation_id == conversation.id,
+    ).first()
+    if not message:
+        return error_response(status_code=status.HTTP_404_NOT_FOUND, message="Message not found")
+
+    db.delete(message)
+    db.commit()
+
+    payload = {"event": "message_deleted", "data": {"id": message_id}}
+    await manager.broadcast_to_submission(submission_id, payload)
+
+    return success_response(
+        status_code=status.HTTP_200_OK,
+        message="Message deleted successfully",
+        data={"id": message_id},
+    )
+
+
+# ---------------------------------------------------------------------------
+# MARK MESSAGES AS READ (ADMIN)
+# ---------------------------------------------------------------------------
+
+async def mark_admin_messages_read(
+    submission_id: str,
+    current_admin: Admin,
+    db: Session,
+):
+    """
+    Marks all unread CLIENT messages in the conversation as read.
+    Broadcasts 'read_receipt' WebSocket event.
+    """
+    submission = db.query(Submission).filter(Submission.id == submission_id).first()
+    if not submission:
+        return error_response(status_code=status.HTTP_404_NOT_FOUND, message="Submission not found")
+
+    is_restricted = current_admin.role in [AdminRole.SUB_ADMIN.value]
+    if is_restricted and submission.assigned_to_id != current_admin.id:
+        return error_response(
+            status_code=status.HTTP_403_FORBIDDEN,
+            message="You do not have permission to manage messages in this submission",
+        )
+
+    conversation = db.query(Conversation).filter(
+        Conversation.submission_id == submission_id
+    ).first()
+    if not conversation:
+        return error_response(status_code=status.HTTP_404_NOT_FOUND, message="No conversation found")
+
+    updated_count = (
+        db.query(Message)
+        .filter(
+            Message.conversation_id == conversation.id,
+            Message.sender_type == MessageSenderType.CLIENT.value,
+            Message.is_read == False,
+        )
+        .update({"is_read": True})
+    )
+    db.commit()
+
+    read_at = str(datetime.now(timezone.utc))
+    payload = {
+        "event": "read_receipt",
+        "data": {
+            "read_by": "staff",
+            "read_by_name": f"{current_admin.first_name} {current_admin.last_name}",
+            "read_at": read_at,
+            "messages_marked": updated_count,
+        },
+    }
+    await manager.broadcast_to_submission(submission_id, payload)
+
+    return success_response(
+        status_code=status.HTTP_200_OK,
+        message=f"{updated_count} message(s) marked as read",
+        data=payload["data"],
     )

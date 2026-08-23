@@ -7,6 +7,10 @@ class MessageCreate(BaseModel):
     attachments: Optional[List[Any]] = None
 
 
+class MessageEdit(BaseModel):
+    message: str
+
+
 class MessageResponse(BaseModel):
     id: str
     conversation_id: str

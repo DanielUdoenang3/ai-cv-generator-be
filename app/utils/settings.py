@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     REDIS_URL: str = config("REDIS_URL", default="")
     REDIS_PASSWORD: str = config("REDIS_PASSWORD", default="")
 
+    # WebSocket Pub/Sub backend — "memory" (default, single-worker) | "redis" (multi-worker, Hetzner)
+    WS_BACKEND: str = config("WS_BACKEND", default="memory")
+
     # Email configurations (Resend)
     RESEND_API_KEY: str = config("RESEND_API_KEY", default="")
     FROM_EMAIL: str = config("FROM_EMAIL", default="noreply@example.com")

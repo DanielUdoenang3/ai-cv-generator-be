@@ -59,3 +59,9 @@ uvicorn==0.40.0
 uvloop==0.22.1
 watchfiles==1.1.1
 websockets==16.0
+
+# ---------------------------------------------------------------------------
+# Multi-worker WebSocket backend (Hetzner / VPS with uvicorn --workers N)
+# Uncomment and pip install when setting WS_BACKEND=redis in .env
+# ---------------------------------------------------------------------------
+# redis[asyncio]>=5.0.0

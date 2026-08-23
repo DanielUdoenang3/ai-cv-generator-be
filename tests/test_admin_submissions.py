@@ -212,3 +212,100 @@ def test_admin_unassign_submission(client):
     )
     assert unassign_act is not None
 
+
+def test_admin_edit_message(client):
+    headers, sub_id = _setup_admin_and_submission(client)
+
+    # 1. Send message
+    res = client.post(
+        f"/api/v1/admin/submissions/{sub_id}/messages",
+        headers=headers,
+        data={"message": "Original Admin Message"}
+    )
+    msg_id = res.json()["data"]["id"]
+
+    # 2. Edit message
+    res_edit = client.patch(
+        f"/api/v1/admin/submissions/{sub_id}/messages/{msg_id}",
+        headers=headers,
+        json={"message": "Updated Admin Message"}
+    )
+    assert res_edit.status_code == 200
+    assert res_edit.json()["data"]["message"] == "Updated Admin Message"
+
+    # 3. Retrieve messages and verify edit
+    res_get = client.get(f"/api/v1/admin/submissions/{sub_id}/messages", headers=headers)
+    messages = res_get.json()["data"]["messages"]
+    assert len(messages) == 1
+    assert messages[0]["message"] == "Updated Admin Message"
+
+
+def test_admin_delete_message(client):
+    headers, sub_id = _setup_admin_and_submission(client)
+
+    # 1. Send message
+    res = client.post(
+        f"/api/v1/admin/submissions/{sub_id}/messages",
+        headers=headers,
+        data={"message": "Delete Admin Message"}
+    )
+    msg_id = res.json()["data"]["id"]
+
+    # 2. Delete message
+    res_delete = client.delete(
+        f"/api/v1/admin/submissions/{sub_id}/messages/{msg_id}",
+        headers=headers
+    )
+    assert res_delete.status_code == 200
+
+    # 3. Retrieve messages and verify deletion
+    res_get = client.get(f"/api/v1/admin/submissions/{sub_id}/messages", headers=headers)
+    assert len(res_get.json()["data"]["messages"]) == 0
+
+
+def test_admin_mark_messages_read(client):
+    headers, sub_id = _setup_admin_and_submission(client)
+
+    # Mark client messages as read
+    res = client.patch(
+        f"/api/v1/admin/submissions/{sub_id}/messages/read",
+        headers=headers
+    )
+    assert res.status_code == 200
+    assert res.json()["data"]["read_by"] == "staff"
+
+
+def test_admin_websocket_flow(client):
+    headers, sub_id = _setup_admin_and_submission(client)
+    token = headers["Authorization"].split(" ")[1]
+
+    # 1. Connect websocket
+    with client.websocket_connect(
+        f"/api/v1/admin/submissions/{sub_id}/ws?token={token}"
+    ) as websocket:
+        # 2. Test ping-pong
+        websocket.send_json({"type": "ping"})
+        data = websocket.receive_json()
+        assert data["type"] == "pong"
+
+        # 3. Test typing indicator
+        websocket.send_json({"type": "typing", "is_typing": True})
+        data = websocket.receive_json()
+        assert data["event"] == "typing"
+        assert data["data"]["sender_type"] == "staff"
+        assert data["data"]["is_typing"] is True
+
+
+def test_admin_websocket_auth_failure(client):
+    headers, sub_id = _setup_admin_and_submission(client)
+    from starlette.websockets import WebSocketDisconnect
+    import pytest
+
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect(
+            f"/api/v1/admin/submissions/{sub_id}/ws?token=invalid_jwt_token"
+        ):
+            pass
+    assert exc_info.value.code == 4001
+
+

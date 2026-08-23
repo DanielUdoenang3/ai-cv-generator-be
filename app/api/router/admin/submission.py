@@ -7,6 +7,9 @@ from app.api.controller.admin.submission import (
     update_submission_status_controller,
     get_submission_messages_controller,
     send_admin_message_controller,
+    edit_admin_message_controller,
+    delete_admin_message_controller,
+    mark_admin_read_controller,
 )
 
 admin_submission_router = APIRouter(prefix="/submissions", tags=["Admin Submission Management"])
@@ -78,5 +81,37 @@ admin_submission_router.add_api_route(
     description=(
         "Allows authenticated staff to reply in a client's chat. "
         "Message is permanently stamped with the sender's identity from their JWT session."
+    ),
+)
+
+# NOTE: /messages/read must be registered BEFORE /messages/{message_id}
+# to prevent FastAPI treating "read" as a message_id path param.
+admin_submission_router.add_api_route(
+    "/{submission_id}/messages/read",
+    endpoint=mark_admin_read_controller,
+    methods=["PATCH"],
+    summary="Mark Client Messages as Read",
+    description="Mark all unread client messages in the conversation as read.",
+)
+
+admin_submission_router.add_api_route(
+    "/{submission_id}/messages/{message_id}",
+    endpoint=edit_admin_message_controller,
+    methods=["PATCH"],
+    summary="Edit Staff Message",
+    description=(
+        "Edit a staff message. Sub-admins can only edit messages they personally sent. "
+        "Super admins can edit any staff message."
+    ),
+)
+
+admin_submission_router.add_api_route(
+    "/{submission_id}/messages/{message_id}",
+    endpoint=delete_admin_message_controller,
+    methods=["DELETE"],
+    summary="Delete Message",
+    description=(
+        "Delete any message in the conversation. "
+        "Sub-admins restricted to their assigned submissions."
     ),
 )

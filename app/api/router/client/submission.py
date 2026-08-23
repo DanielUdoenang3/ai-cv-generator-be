@@ -6,6 +6,9 @@ from app.api.controller.client.submission import (
 from app.api.controller.client.chat import (
     get_messages_controller,
     send_message_controller,
+    edit_message_controller,
+    delete_message_controller,
+    mark_read_controller,
 )
 
 client_router = APIRouter(prefix="/public", tags=["Public Client Submission & Chat"])
@@ -41,3 +44,30 @@ client_router.add_api_route(
     summary="Send Message",
     description="Send a message to the support/assigned team. Requires X-Client-Access-Token header.",
 )
+
+# NOTE: /messages/read must be registered BEFORE /messages/{message_id}
+# to prevent FastAPI treating "read" as a message_id path param.
+client_router.add_api_route(
+    "/submissions/{submission_id}/messages/read",
+    endpoint=mark_read_controller,
+    methods=["PATCH"],
+    summary="Mark Messages as Read",
+    description="Mark all unread staff messages as read. Requires X-Client-Access-Token header.",
+)
+
+client_router.add_api_route(
+    "/submissions/{submission_id}/messages/{message_id}",
+    endpoint=edit_message_controller,
+    methods=["PATCH"],
+    summary="Edit Message",
+    description="Edit a message you previously sent. Requires X-Client-Access-Token header.",
+)
+
+client_router.add_api_route(
+    "/submissions/{submission_id}/messages/{message_id}",
+    endpoint=delete_message_controller,
+    methods=["DELETE"],
+    summary="Delete Message",
+    description="Delete a message you previously sent. Requires X-Client-Access-Token header.",
+)
+
