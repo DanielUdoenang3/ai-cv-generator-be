@@ -7,6 +7,7 @@ from app.models.clients import Client
 from app.models.submissions import Submission
 from app.models.chats import Conversation
 from app.models.activities import SubmissionActivity
+from app.models.documents import Document
 from app.models.enums import SubmissionStatus
 from app.schema.submission import CreateSubmission
 from app.utils.custom_response import success_response, error_response
@@ -95,7 +96,7 @@ async def create_submission(data: CreateSubmission, db: Session):
 async def get_submission_status(submission_id: str, access_token: str, db: Session):
     """
     Allows a client to check the status of their submission
-    using their submission_id and secret access_token.
+    using their submission_id and secret access_token. Includes all generated documents.
     """
 
     submission = db.query(Submission).filter(
@@ -111,6 +112,25 @@ async def get_submission_status(submission_id: str, access_token: str, db: Sessi
 
     client = submission.client
     assigned_to = submission.assigned_to
+
+    # Fetch documents for client response
+    docs = (
+        db.query(Document)
+        .filter(Document.submission_id == submission.id)
+        .order_by(Document.file_type, Document.version)
+        .all()
+    )
+    documents_list = [
+        {
+            "id": d.id,
+            "file_name": d.file_name,
+            "file_url": d.file_url,
+            "file_type": d.file_type,
+            "version": d.version,
+            "created_at": str(d.created_at),
+        }
+        for d in docs
+    ]
 
     return success_response(
         status_code=status.HTTP_200_OK,
@@ -130,5 +150,6 @@ async def get_submission_status(submission_id: str, access_token: str, db: Sessi
                 "first_name": assigned_to.first_name,
                 "last_name": assigned_to.last_name,
             } if assigned_to else None,
+            "documents": documents_list,
         },
     )

@@ -4,10 +4,13 @@ annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.12.1
 bcrypt==4.3.0
+brotli==1.2.0
 certifi==2026.1.4
+cffi==2.1.1
 charset-normalizer==3.4.4
 click==8.3.1
 cloudinary==1.46.0
+cssselect2==0.9.0
 dnspython==2.8.0
 ecdsa==0.19.1
 email-validator==2.3.0
@@ -15,26 +18,38 @@ fastapi==0.128.0
 fastapi-cli==0.0.20
 fastapi-cloud-cli==0.11.0
 fastar==0.8.0
+fonttools==4.63.0
 greenlet==3.3.1
 h11==0.16.0
 httpcore==1.0.9
 httptools==0.7.1
 httpx==0.28.1
 idna==3.11
+iniconfig==2.3.0
 jinja2==3.1.6
+lxml==6.1.2
 mako==1.3.10
 markdown-it-py==4.0.0
 markupsafe==3.0.3
 mdurl==0.1.2
+packaging==26.3
 passlib==1.7.4
+pillow==12.3.0
+pluggy==1.6.0
 psycopg2-binary==2.9.11
 pyasn1==0.6.2
+pycparser==3.0
 pydantic==2.12.5
 pydantic-core==2.41.5
 pydantic-extra-types==2.11.0
 pydantic-settings==2.12.0
+pydyf==0.12.1
 pygments==2.19.2
+pyphen==0.18.1
+pytest==9.1.1
+pytest-asyncio==1.4.0
 python-decouple==3.8
+python-docx==1.2.0
 python-dotenv==1.2.1
 python-jose==3.5.0
 python-multipart==0.0.21
@@ -50,6 +65,8 @@ shellingham==1.5.4
 six==1.17.0
 sqlalchemy==2.0.46
 starlette==0.50.0
+tinycss2==1.5.1
+tinyhtml5==2.1.0
 typer==0.21.1
 typing-extensions==4.15.0
 typing-inspection==0.4.2
@@ -58,10 +75,7 @@ uuid7==0.1.0
 uvicorn==0.40.0
 uvloop==0.22.1
 watchfiles==1.1.1
+weasyprint==69.0
+webencodings==0.6.1
 websockets==16.0
-
-# ---------------------------------------------------------------------------
-# Multi-worker WebSocket backend (Hetzner / VPS with uvicorn --workers N)
-# Uncomment and pip install when setting WS_BACKEND=redis in .env
-# ---------------------------------------------------------------------------
-# redis[asyncio]>=5.0.0
+zopfli==0.4.3

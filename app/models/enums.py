@@ -27,10 +27,29 @@ class MessageSenderType(str, Enum):
     SYSTEM = "system"
 
 
+class TaskPriority(str, Enum):
+    LOW = "low"
+    NORMAL = "normal"
+    HIGH = "high"
 
-# class Status(str, Enum):
-#     PENDING = "pending"
-#     APPROVED = "approved"
-#     REJECTED = "rejected"
+
+class TaskStatus(str, Enum):
+    TODO = "todo"
+    IN_PROGRESS = "in_progress"
+    REVIEW = "review"
+    DONE = "done"
+
+
+class DocumentType(str, Enum):
+    PDF = "pdf"
+    DOCX = "docx"
+    LATEX = "latex"
+
+
+class AiGenerationStatus(str, Enum):
+    SUCCESS = "success"
+    FAILED = "failed"
+    PENDING = "pending"
+
 
 
