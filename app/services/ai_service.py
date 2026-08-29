@@ -150,6 +150,91 @@ def _generate_mock_structured_cv(submission: Submission, custom_instructions: Op
     }
 
 
+async def _call_openai(openai_key: str, model_name: Optional[str], user_prompt: str, system_prompt: str) -> Dict[str, Any]:
+    """Internal: Execute a live OpenAI API call."""
+    target_model = model_name or settings.OPENAI_MODEL
+    url = "https://api.openai.com/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {openai_key}",
+        "Content-Type": "application/json",
+    }
+    body = {
+        "model": target_model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.3,
+        "response_format": {"type": "json_object"},
+    }
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(url, headers=headers, json=body)
+        if resp.status_code != 200:
+            raise Exception(f"OpenAI API Error ({resp.status_code}): {resp.text}")
+
+        data = resp.json()
+        content = data["choices"][0]["message"]["content"]
+        usage = data.get("usage", {})
+        in_tokens = usage.get("prompt_tokens", 0)
+        out_tokens = usage.get("completion_tokens", 0)
+        cost = round((in_tokens * 0.0000025) + (out_tokens * 0.000010), 6)
+
+        return {
+            "structured_cv": json.loads(content),
+            "input_tokens": in_tokens,
+            "output_tokens": out_tokens,
+            "cost": cost,
+            "model_used": target_model,
+            "provider_used": "openai",
+            "is_mock": False,
+        }
+
+
+async def _call_gemini(gemini_key: str, model_name: Optional[str], user_prompt: str, system_prompt: str) -> Dict[str, Any]:
+    """Internal: Execute a live Gemini API call."""
+    target_model = model_name or settings.GEMINI_MODEL
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent?key={gemini_key}"
+    headers = {"Content-Type": "application/json"}
+    body = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": f"System Instructions:\n{system_prompt}\n\nUser Context:\n{user_prompt}"}
+                ]
+            }
+        ],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "temperature": 0.3,
+        },
+    }
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(url, headers=headers, json=body)
+        if resp.status_code != 200:
+            raise Exception(f"Gemini API Error ({resp.status_code}): {resp.text}")
+
+        data = resp.json()
+        candidates = data.get("candidates", [])
+        if not candidates:
+            raise Exception("Gemini returned empty candidates")
+
+        content_text = candidates[0]["content"]["parts"][0]["text"]
+        usage_meta = data.get("usageMetadata", {})
+        in_tokens = usage_meta.get("promptTokenCount", 0)
+        out_tokens = usage_meta.get("candidatesTokenCount", 0)
+        cost = round((in_tokens * 0.0000015) + (out_tokens * 0.000005), 6)
+
+        return {
+            "structured_cv": json.loads(content_text),
+            "input_tokens": in_tokens,
+            "output_tokens": out_tokens,
+            "cost": cost,
+            "model_used": target_model,
+            "provider_used": "gemini",
+            "is_mock": False,
+        }
+
+
 async def call_llm_provider(
     provider: str,
     model_name: Optional[str],
@@ -157,122 +242,66 @@ async def call_llm_provider(
     system_prompt: str,
 ) -> Dict[str, Any]:
     """
-    Calls OpenAI or Gemini API requesting structured JSON output using httpx.
-    Falls back to mock generator if API key is not provided in environment.
+    Calls the appropriate LLM provider (OpenAI or Gemini) with smart fallback.
+
+    Fallback rules:
+    - If the requested provider's API key is available → use it directly.
+    - If the requested provider's key is missing but the other provider's key
+      IS available → silently fall back to that provider.
+    - If neither key is configured → raise a user-friendly error immediately.
+      (No silent mock data in production.)
     """
-    provider = provider.lower()
-    
-    # Check if API key is present for requested provider
+    requested = provider.lower()
+    if requested not in ("openai", "gemini"):
+        raise ValueError(f"Unsupported provider: '{requested}'. Must be 'openai' or 'gemini'.")
+
     openai_key = settings.OPENAI_API_KEY
     gemini_key = settings.GEMINI_API_KEY
 
-    # Use mock response if running in test/dev environment without live keys
-    if provider == "openai" and not openai_key:
-        logger.info("No OPENAI_API_KEY found in settings. Returning structured mock CV.")
-        return {
-            "structured_cv": None,  # Will be populated by caller using submission context
-            "input_tokens": 850,
-            "output_tokens": 420,
-            "cost": 0.0025,
-            "model_used": model_name or settings.OPENAI_MODEL,
-            "is_mock": True,
-        }
+    # ── Guard: no keys at all ────────────────────────────────────────────────
+    if not openai_key and not gemini_key:
+        raise Exception(
+            "No AI provider API key is configured. "
+            "Please add OPENAI_API_KEY or GEMINI_API_KEY to your environment variables "
+            "and redeploy the service."
+        )
 
-    if provider == "gemini" and not gemini_key:
-        logger.info("No GEMINI_API_KEY found in settings. Returning structured mock CV.")
-        return {
-            "structured_cv": None,
-            "input_tokens": 780,
-            "output_tokens": 390,
-            "cost": 0.0018,
-            "model_used": model_name or settings.GEMINI_MODEL,
-            "is_mock": True,
-        }
+    # ── Resolve the actual provider to use after smart fallback ─────────────
+    if requested == "openai":
+        if openai_key:
+            actual = "openai"
+        else:
+            # OpenAI key missing → fall back to Gemini
+            logger.warning(
+                "OPENAI_API_KEY is not configured. "
+                "Falling back to Gemini for this generation."
+            )
+            actual = "gemini"
+    else:  # requested == "gemini"
+        if gemini_key:
+            actual = "gemini"
+        else:
+            # Gemini key missing → fall back to OpenAI
+            logger.warning(
+                "GEMINI_API_KEY is not configured. "
+                "Falling back to OpenAI for this generation."
+            )
+            actual = "openai"
 
-    # Live OpenAI API Call
-    if provider == "openai":
-        target_model = model_name or settings.OPENAI_MODEL
-        url = "https://api.openai.com/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {openai_key}",
-            "Content-Type": "application/json",
-        }
-        body = {
-            "model": target_model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "temperature": 0.3,
-            "response_format": {"type": "json_object"},
-        }
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(url, headers=headers, json=body)
-            if resp.status_code != 200:
-                raise Exception(f"OpenAI API Error ({resp.status_code}): {resp.text}")
-            
-            data = resp.json()
-            content = data["choices"][0]["message"]["content"]
-            usage = data.get("usage", {})
-            in_tokens = usage.get("prompt_tokens", 0)
-            out_tokens = usage.get("completion_tokens", 0)
-            # Estimate cost ($0.0025 / 1k prompt, $0.01 / 1k completion for gpt-4o)
-            cost = round((in_tokens * 0.0000025) + (out_tokens * 0.000010), 6)
-
-            return {
-                "structured_cv": json.loads(content),
-                "input_tokens": in_tokens,
-                "output_tokens": out_tokens,
-                "cost": cost,
-                "model_used": target_model,
-                "is_mock": False,
-            }
-
-    # Live Gemini API Call
-    elif provider == "gemini":
-        target_model = model_name or settings.GEMINI_MODEL
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent?key={gemini_key}"
-        headers = {"Content-Type": "application/json"}
-        body = {
-            "contents": [
-                {
-                    "parts": [
-                        {"text": f"System Instructions:\n{system_prompt}\n\nUser Context:\n{user_prompt}"}
-                    ]
-                }
-            ],
-            "generationConfig": {
-                "responseMimeType": "application/json",
-                "temperature": 0.3,
-            },
-        }
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(url, headers=headers, json=body)
-            if resp.status_code != 200:
-                raise Exception(f"Gemini API Error ({resp.status_code}): {resp.text}")
-
-            data = resp.json()
-            candidates = data.get("candidates", [])
-            if not candidates:
-                raise Exception("Gemini returned empty candidates")
-
-            content_text = candidates[0]["content"]["parts"][0]["text"]
-            usage_meta = data.get("usageMetadata", {})
-            in_tokens = usage_meta.get("promptTokenCount", 0)
-            out_tokens = usage_meta.get("candidatesTokenCount", 0)
-            cost = round((in_tokens * 0.0000015) + (out_tokens * 0.000005), 6)
-
-            return {
-                "structured_cv": json.loads(content_text),
-                "input_tokens": in_tokens,
-                "output_tokens": out_tokens,
-                "cost": cost,
-                "model_used": target_model,
-                "is_mock": False,
-            }
-
+    # ── Execute the resolved provider call ───────────────────────────────────
+    if actual == "openai":
+        result = await _call_openai(openai_key, model_name, user_prompt, system_prompt)
     else:
-        raise ValueError(f"Unsupported provider: '{provider}'")
+        result = await _call_gemini(gemini_key, model_name, user_prompt, system_prompt)
+
+    # Surface fallback info in logs so it's visible in server output
+    if actual != requested:
+        logger.info(
+            f"AI generation used '{actual}' (requested: '{requested}') "
+            f"— model: {result['model_used']}"
+        )
+
+    return result
 
 
 async def generate_cv_service(
@@ -453,7 +482,20 @@ async def generate_cv_service(
             system_prompt=system_prompt_text,
         )
     except Exception as exc:
-        logger.error(f"AI Generation Failed: {str(exc)}")
+        error_msg = str(exc)
+        logger.error(f"AI Generation Failed: {error_msg}")
+
+        # Detect "no API keys configured" and return a clear 503 instead of a generic 500
+        no_keys_configured = "No AI provider API key is configured" in error_msg
+        http_status = (
+            status.HTTP_503_SERVICE_UNAVAILABLE if no_keys_configured
+            else status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+        user_message = (
+            error_msg if no_keys_configured
+            else f"AI generation failed: {error_msg}"
+        )
+
         # Log failure record in DB
         failed_generation = AiGeneration(
             submission_id=submission_id,
@@ -462,13 +504,13 @@ async def generate_cv_service(
             output_tokens=0,
             cost=0.0,
             status=AiGenerationStatus.FAILED.value,
-            error_message=str(exc),
+            error_message=error_msg,
         )
         db.add(failed_generation)
         db.commit()
         return error_response(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            message=f"AI generation failed: {str(exc)}",
+            status_code=http_status,
+            message=user_message,
         )
 
     # Populate mock data if in mock mode
@@ -541,6 +583,15 @@ async def generate_cv_service(
         },
     })
 
+    # Determine actual provider used (may differ from requested due to smart fallback)
+    actual_provider = llm_result.get("provider_used", payload.provider)
+    provider_note = (
+        f"Requested '{payload.provider}', used '{actual_provider}' (smart fallback — "
+        f"'{payload.provider}' API key not configured)."
+        if actual_provider != payload.provider
+        else None
+    )
+
     return success_response(
         status_code=status.HTTP_200_OK,
         message="Structured CV generated successfully",
@@ -548,7 +599,9 @@ async def generate_cv_service(
             "ai_generation_id": ai_gen_record.id,
             "submission_id": submission_id,
             "model": ai_gen_record.model,
-            "provider": payload.provider,
+            "provider_requested": payload.provider,
+            "provider_used": actual_provider,
+            **({"provider_fallback_note": provider_note} if provider_note else {}),
             "input_tokens": ai_gen_record.input_tokens,
             "output_tokens": ai_gen_record.output_tokens,
             "cost": ai_gen_record.cost,
