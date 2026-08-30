@@ -267,6 +267,7 @@ async def call_llm_provider(
         )
 
     # ── Resolve the actual provider to use after smart fallback ─────────────
+    fell_back = False
     if requested == "openai":
         if openai_key:
             actual = "openai"
@@ -277,6 +278,7 @@ async def call_llm_provider(
                 "Falling back to Gemini for this generation."
             )
             actual = "gemini"
+            fell_back = True
     else:  # requested == "gemini"
         if gemini_key:
             actual = "gemini"
@@ -287,12 +289,18 @@ async def call_llm_provider(
                 "Falling back to OpenAI for this generation."
             )
             actual = "openai"
+            fell_back = True
+
+    # If we fell back to a different provider, the caller's model_name is
+    # provider-specific (e.g. "gpt-4o" can't be sent to Gemini) so clear it
+    # and let each provider default to its own configured model.
+    effective_model = None if fell_back else model_name
 
     # ── Execute the resolved provider call ───────────────────────────────────
     if actual == "openai":
-        result = await _call_openai(openai_key, model_name, user_prompt, system_prompt)
+        result = await _call_openai(openai_key, effective_model, user_prompt, system_prompt)
     else:
-        result = await _call_gemini(gemini_key, model_name, user_prompt, system_prompt)
+        result = await _call_gemini(gemini_key, effective_model, user_prompt, system_prompt)
 
     # Surface fallback info in logs so it's visible in server output
     if actual != requested:

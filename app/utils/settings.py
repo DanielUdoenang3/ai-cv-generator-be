@@ -50,9 +50,9 @@ class Settings(BaseSettings):
     DASHBOARD: str = config("DASHBOARD", default="http://localhost:3000")
 
     # AI-CV-GENERATOR
-    OPENAI_API_KEY: str = config("OPENAI_API_KEY", default="")
-    OPENAI_MODEL: str = config("OPENAI_MODEL", default="gpt-4o")
-    GEMINI_API_KEY: str = config("GEMINI_API_KEY", default="")
+    OPENAI_API_KEY: str = config("OPENAI_API_KEY")
+    OPENAI_MODEL: str = config("OPENAI_MODEL")
+    GEMINI_API_KEY: str = config("GEMINI_API_KEY")
     GEMINI_MODEL: str = config("GEMINI_MODEL", default="gemini-1.5-flash")
 
     # Cloudinary
