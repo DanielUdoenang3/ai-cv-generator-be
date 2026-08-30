@@ -14,41 +14,90 @@ DEFAULT_PROMPT_TEMPLATES = [
         "name": "Software Engineer CV",
         "description": "Optimized prompt for software engineering roles",
         "category": "Technology",
-        "content": "Create a professional CV for a {role} position at {company}. Highlight technical skills, project experience, and achievements. Focus on {keywords}.",
-        "usage_count": 156,
+        "content": (
+            "You are an expert technical recruiter and CV writer specialising in software engineering roles. "
+            "Your task is to generate a polished, ATS-optimised CV for the candidate described in the user context.\n\n"
+            "Guidelines:\n"
+            "- Lead with measurable impact: use metrics, percentages, and numbers wherever possible.\n"
+            "- Highlight technical stack, architecture decisions, and scale (users, requests, data volume).\n"
+            "- Use strong action verbs: Architected, Engineered, Optimised, Reduced, Scaled, Delivered.\n"
+            "- Tailor the professional summary and bullet points specifically to the target role and company.\n"
+            "- Keep bullet points concise (one sentence, max two lines each).\n"
+            "- Skills section should group technologies by category (Languages, Frameworks, Cloud, Tools, etc.).\n"
+            "- If the candidate has no explicit data for a field, omit it gracefully (return null).\n"
+            "- Do NOT fabricate dates, companies, or qualifications not present in the source data."
+        ),
+        "usage_count": 0,
         "is_active": True,
     },
     {
         "name": "Product Manager CV",
         "description": "Prompt for product management positions",
         "category": "Product",
-        "content": "Develop a CV for {role} at {company}. Emphasize leadership, product launches, cross-functional collaboration, and metrics. Include {keywords}.",
-        "usage_count": 89,
+        "content": (
+            "You are an expert CV writer specialising in product management roles. "
+            "Your task is to generate a compelling, results-driven CV for the candidate described in the user context.\n\n"
+            "Guidelines:\n"
+            "- Lead every bullet point with measurable business outcomes (revenue, retention, NPS, OKR attainment).\n"
+            "- Emphasise product launches, roadmap ownership, cross-functional leadership, and stakeholder management.\n"
+            "- Show progression: scope of ownership, team size, and business impact should increase over time.\n"
+            "- Tailor the summary to the specific target company and role.\n"
+            "- Skills section should include: Product Strategy, Roadmapping, A/B Testing, Data Analysis, Agile/Scrum, relevant tools.\n"
+            "- Do NOT fabricate metrics or company names not present in the source data."
+        ),
+        "usage_count": 0,
         "is_active": True,
     },
     {
         "name": "Executive CV",
         "description": "High-level executive resume template",
         "category": "Executive",
-        "content": "Craft an executive CV for {role} at {company}. Focus on strategic vision, team building, revenue growth, and board experience. Keywords: {keywords}.",
-        "usage_count": 45,
+        "content": (
+            "You are a senior executive CV consultant. "
+            "Your task is to generate a board-ready, high-impact executive CV for the candidate described in the user context.\n\n"
+            "Guidelines:\n"
+            "- Open with a powerful executive summary (3-4 lines) that conveys vision, scale of leadership, and signature achievements.\n"
+            "- Focus on P&L ownership, revenue growth, organisational transformation, and strategic partnerships.\n"
+            "- Each role should show scope: team size, budget managed, revenue influenced, and geographic reach.\n"
+            "- Highlight board experience, external speaking, and thought leadership where relevant.\n"
+            "- Skills section: Strategic Leadership, M&A, P&L Management, Board Relations, Digital Transformation, Change Management.\n"
+            "- Tone should be authoritative and concise — no fluff.\n"
+            "- Do NOT fabricate figures not present in the source data."
+        ),
+        "usage_count": 0,
         "is_active": True,
     },
     {
         "name": "Marketing Professional CV",
         "description": "Template for marketing roles",
         "category": "Marketing",
-        "content": "Generate a CV for {role} position at {company}. Highlight campaigns, ROI, brand strategy, and digital marketing skills. Include {keywords}.",
-        "usage_count": 67,
+        "content": (
+            "You are an expert CV writer specialising in marketing and growth roles. "
+            "Your task is to generate a compelling CV for the candidate described in the user context.\n\n"
+            "Guidelines:\n"
+            "- Lead with campaign performance metrics: ROAS, CAC, LTV, MQL/SQL volumes, conversion rates.\n"
+            "- Highlight channel expertise: SEO/SEM, paid social, email, content, brand, events, PR.\n"
+            "- Show growth story: audience size, budget managed, revenue attributable to marketing efforts.\n"
+            "- Tailor the summary to the target company's industry and stage (startup vs. enterprise).\n"
+            "- Skills section should list tools (HubSpot, Salesforce, Google Analytics, Meta Ads, etc.) and disciplines.\n"
+            "- Do NOT fabricate campaign results or company names not present in the source data."
+        ),
+        "usage_count": 0,
         "is_active": False,
     },
 ]
 
 
 def seed_default_prompts_if_empty(db: Session) -> List[Prompt]:
-    """Helper method — seeds default role-specific prompts if the table is empty."""
-    existing_count = db.query(Prompt).count()
-    if existing_count == 0:
+    """
+    Seeds default role-specific prompts if the table is empty.
+    Also upgrades any existing prompts that still contain the old placeholder
+    template syntax (e.g. '{role}', '{company}') with the proper system prompts.
+    """
+    existing_prompts = db.query(Prompt).all()
+
+    if not existing_prompts:
+        # Fresh seed
         created_prompts = []
         for p_data in DEFAULT_PROMPT_TEMPLATES:
             prompt = Prompt(
@@ -58,7 +107,7 @@ def seed_default_prompts_if_empty(db: Session) -> List[Prompt]:
                 content=p_data["content"],
                 version=1,
                 is_active=p_data["is_active"],
-                usage_count=p_data["usage_count"],
+                usage_count=0,
                 created_by_id=None,
             )
             db.add(prompt)
@@ -67,6 +116,18 @@ def seed_default_prompts_if_empty(db: Session) -> List[Prompt]:
         for p in created_prompts:
             db.refresh(p)
         return created_prompts
+
+    # Upgrade stale placeholder prompts in-place
+    template_map = {t["name"]: t for t in DEFAULT_PROMPT_TEMPLATES}
+    upgraded = False
+    for p in existing_prompts:
+        if p.name in template_map and "{role}" in (p.content or ""):
+            p.content = template_map[p.name]["content"]
+            p.description = template_map[p.name]["description"]
+            upgraded = True
+    if upgraded:
+        db.commit()
+
     return db.query(Prompt).all()
 
 

@@ -150,6 +150,72 @@ def _generate_mock_structured_cv(submission: Submission, custom_instructions: Op
     }
 
 
+
+# ---------------------------------------------------------------------------
+# Strict JSON output schema appended to every LLM system prompt.
+# This ensures the model returns exactly the fields our Pydantic schema expects,
+# regardless of how the admin-defined prompt is written.
+# ---------------------------------------------------------------------------
+_JSON_SCHEMA_INSTRUCTION = """
+---
+CRITICAL OUTPUT FORMAT INSTRUCTIONS — YOU MUST FOLLOW THESE EXACTLY:
+
+You MUST return a single valid JSON object with EXACTLY these top-level keys
+(no extra keys, no renamed keys, no nested wrappers):
+
+{
+  "personal_info": {
+    "full_name": "<string>",
+    "email": "<string or null>",
+    "phone": "<string or null>",
+    "location": "<string or null>",
+    "linkedin": "<string or null>",
+    "portfolio": "<string or null>",
+    "target_role": "<string or null>"
+  },
+  "professional_summary": "<string>",
+  "work_experience": [
+    {
+      "job_title": "<string>",
+      "company": "<string>",
+      "location": "<string or null>",
+      "start_date": "<string or null>",
+      "end_date": "<string or null>",
+      "is_current": <boolean>,
+      "bullet_points": ["<string>", ...]
+    }
+  ],
+  "skills": {
+    "<category name>": ["<skill>", ...]
+  },
+  "education": [
+    {
+      "degree": "<string>",
+      "institution": "<string>",
+      "location": "<string or null>",
+      "graduation_year": "<string or null>",
+      "honors": "<string or null>"
+    }
+  ],
+  "projects": [
+    {
+      "title": "<string>",
+      "description": "<string>",
+      "tech_stack": ["<string>", ...],
+      "link": "<string or null>"
+    }
+  ],
+  "certifications": ["<string>", ...]
+}
+
+RULES:
+- The top-level key for personal details MUST be "personal_info" (not "contact_information", not "personal_details", not anything else).
+- The top-level key for work history MUST be "work_experience" (not "experience", not "employment").
+- Do NOT wrap the output in a "cv", "resume", or any other parent key.
+- Return ONLY the JSON object. No markdown, no explanation, no code fences.
+"""
+
+
 async def _call_openai(openai_key: str, model_name: Optional[str], user_prompt: str, system_prompt: str) -> Dict[str, Any]:
     """Internal: Execute a live OpenAI API call."""
     target_model = model_name or settings.OPENAI_MODEL
@@ -266,6 +332,10 @@ async def call_llm_provider(
             "and redeploy the service."
         )
 
+    # Always append the strict JSON schema instruction so the LLM output
+    # matches our Pydantic schema regardless of how the admin prompt is written.
+    enforced_system_prompt = system_prompt + _JSON_SCHEMA_INSTRUCTION
+
     # ── Resolve the actual provider to use after smart fallback ─────────────
     fell_back = False
     if requested == "openai":
@@ -298,9 +368,9 @@ async def call_llm_provider(
 
     # ── Execute the resolved provider call ───────────────────────────────────
     if actual == "openai":
-        result = await _call_openai(openai_key, effective_model, user_prompt, system_prompt)
+        result = await _call_openai(openai_key, effective_model, user_prompt, enforced_system_prompt)
     else:
-        result = await _call_gemini(gemini_key, effective_model, user_prompt, system_prompt)
+        result = await _call_gemini(gemini_key, effective_model, user_prompt, enforced_system_prompt)
 
     # Surface fallback info in logs so it's visible in server output
     if actual != requested:
