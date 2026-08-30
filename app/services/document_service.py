@@ -322,6 +322,7 @@ def upload_to_cloudinary(
         resource_type=resource_type,
         format=format,
         overwrite=True,
+        access_mode="public",   # Ensure the secure_url is publicly accessible without auth
     )
     return response
 
