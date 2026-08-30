@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 
+import cloudinary
 import cloudinary.uploader
 from fastapi import status
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -15,6 +16,17 @@ from app.models.enums import AdminRole, DocumentType
 from app.models.submissions import Submission
 from app.schema.ai import StructuredCvData
 from app.utils.custom_response import error_response, success_response
+from app.utils.settings import settings
+
+logger = logging.getLogger(__name__)
+
+# ── Configure Cloudinary ────────────────────────────────────────────────────
+# Initialise here so document_service is self-contained regardless of import order.
+cloudinary.config(
+    cloud_name=settings.CLOUDINARY_CLOUD_NAME,
+    api_key=settings.CLOUDINARY_API_KEY,
+    api_secret=settings.CLOUDINARY_API_SECRET,
+)
 
 logger = logging.getLogger(__name__)
 

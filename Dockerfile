@@ -43,8 +43,14 @@ COPY . .
 
 # ── Non-root user for security ────────────────
 RUN addgroup --system appgroup \
-    && adduser --system --ingroup appgroup appuser
+    && adduser --system --ingroup appgroup appuser \
+    # Give appuser a writable font cache directory (required by WeasyPrint/Fontconfig)
+    && mkdir -p /home/appuser/.cache/fontconfig \
+    && chown -R appuser:appgroup /home/appuser
 USER appuser
+
+# Set font cache dir explicitly so Fontconfig never complains
+ENV XDG_CACHE_HOME=/home/appuser/.cache
 
 # ── Expose & run ─────────────────────────────
 EXPOSE 8000
