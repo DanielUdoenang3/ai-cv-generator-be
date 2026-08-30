@@ -1,4 +1,5 @@
 import json
+import asyncio
 import logging
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
@@ -257,7 +258,11 @@ async def _call_openai(openai_key: str, model_name: Optional[str], user_prompt: 
 
 
 async def _call_gemini(gemini_key: str, model_name: Optional[str], user_prompt: str, system_prompt: str) -> Dict[str, Any]:
-    """Internal: Execute a live Gemini API call."""
+    """
+    Execute a live Gemini API call with exponential backoff retry for rate limits.
+    Retries up to 3 times on 429 responses, respecting the API's retryDelay hint.
+    Daily quota exhaustion (RPD) is not retried — it raises immediately with a clear message.
+    """
     target_model = model_name or settings.GEMINI_MODEL
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent?key={gemini_key}"
     headers = {"Content-Type": "application/json"}
@@ -274,31 +279,72 @@ async def _call_gemini(gemini_key: str, model_name: Optional[str], user_prompt: 
             "temperature": 0.3,
         },
     }
+
+    max_retries = 3
+    last_exception = None
+
     async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(url, headers=headers, json=body)
-        if resp.status_code != 200:
+        for attempt in range(max_retries):
+            resp = await client.post(url, headers=headers, json=body)
+
+            if resp.status_code == 200:
+                data = resp.json()
+                candidates = data.get("candidates", [])
+                if not candidates:
+                    raise Exception("Gemini returned empty candidates")
+
+                content_text = candidates[0]["content"]["parts"][0]["text"]
+                usage_meta = data.get("usageMetadata", {})
+                in_tokens = usage_meta.get("promptTokenCount", 0)
+                out_tokens = usage_meta.get("candidatesTokenCount", 0)
+                cost = round((in_tokens * 0.0000015) + (out_tokens * 0.000005), 6)
+
+                return {
+                    "structured_cv": json.loads(content_text),
+                    "input_tokens": in_tokens,
+                    "output_tokens": out_tokens,
+                    "cost": cost,
+                    "model_used": target_model,
+                    "provider_used": "gemini",
+                    "is_mock": False,
+                }
+
+            if resp.status_code == 429:
+                error_body = resp.json()
+                error_msg = error_body.get("error", {}).get("message", "")
+
+                # Daily quota exhausted — no point retrying until midnight UTC
+                if "PerDay" in error_msg or "per_day" in error_msg.lower():
+                    raise Exception(
+                        f"Gemini daily quota exhausted for model '{target_model}'. "
+                        "The free tier allows 20 requests/day. Quota resets at midnight UTC. "
+                        "Consider upgrading your Gemini API plan to remove this limit."
+                    )
+
+                # Transient rate limit — parse retryDelay from the API response and wait
+                retry_delay = 30  # default fallback
+                details = error_body.get("error", {}).get("details", [])
+                for detail in details:
+                    if detail.get("@type", "").endswith("RetryInfo"):
+                        delay_str = detail.get("retryDelay", "30s")
+                        try:
+                            retry_delay = int(delay_str.rstrip("s")) + 2  # +2s buffer
+                        except ValueError:
+                            pass
+                        break
+
+                last_exception = Exception(f"Gemini API Error ({resp.status_code}): {resp.text}")
+                logger.warning(
+                    f"Gemini rate limit hit (attempt {attempt + 1}/{max_retries}). "
+                    f"Retrying in {retry_delay}s..."
+                )
+                await asyncio.sleep(retry_delay)
+                continue
+
+            # Non-retryable error
             raise Exception(f"Gemini API Error ({resp.status_code}): {resp.text}")
 
-        data = resp.json()
-        candidates = data.get("candidates", [])
-        if not candidates:
-            raise Exception("Gemini returned empty candidates")
-
-        content_text = candidates[0]["content"]["parts"][0]["text"]
-        usage_meta = data.get("usageMetadata", {})
-        in_tokens = usage_meta.get("promptTokenCount", 0)
-        out_tokens = usage_meta.get("candidatesTokenCount", 0)
-        cost = round((in_tokens * 0.0000015) + (out_tokens * 0.000005), 6)
-
-        return {
-            "structured_cv": json.loads(content_text),
-            "input_tokens": in_tokens,
-            "output_tokens": out_tokens,
-            "cost": cost,
-            "model_used": target_model,
-            "provider_used": "gemini",
-            "is_mock": False,
-        }
+    raise last_exception or Exception("Gemini API call failed after all retries")
 
 
 async def call_llm_provider(

@@ -5,6 +5,7 @@ from typing import List, Optional
 
 import cloudinary
 import cloudinary.uploader
+import cloudinary.utils
 from fastapi import status
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from sqlalchemy.orm import Session
@@ -521,11 +522,10 @@ async def download_document_service(
     db: Session,
 ):
     """
-    Fetches document metadata from DB and returns bytes for direct download.
-    Downloads the file from Cloudinary and streams it as a binary response.
+    Returns the document record and a short-lived signed Cloudinary URL.
+    The controller redirects the client directly to that URL, avoiding a
+    server-side proxy fetch that breaks on authenticated/private uploads.
     """
-    import httpx
-
     doc = db.query(Document).filter(
         Document.id == document_id,
         Document.submission_id == submission_id,
@@ -537,18 +537,21 @@ async def download_document_service(
         )
 
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.get(doc.file_url)
-            response.raise_for_status()
-            file_bytes = response.content
+        # Generate a signed URL valid for 1 hour — works regardless of the
+        # upload's access_mode (public or authenticated).
+        signed_url = cloudinary.utils.cloudinary_url(
+            doc.public_id,
+            resource_type="raw",
+            sign_url=True,
+            secure=True,
+            expires_at=int(__import__("time").time()) + 3600,
+        )[0]
     except Exception as e:
-        logger.error(f"Failed to fetch document from Cloudinary: {e}")
-        return None, error_response(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            message="Could not retrieve the document file. Please try again.",
-        )
+        logger.error(f"Failed to generate signed Cloudinary URL: {e}")
+        # Fall back to the stored URL — will work for public uploads
+        signed_url = doc.file_url
 
-    return doc, file_bytes
+    return doc, signed_url
 
 
 async def client_download_document_service(

@@ -1,4 +1,5 @@
 from fastapi import Depends, Response
+from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.utils.database import get_db
@@ -39,15 +40,5 @@ async def download_document_controller(
     if doc is None:
         return result  # error_response
 
-    content_type_map = {
-        "pdf": "application/pdf",
-        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    }
-    media_type = content_type_map.get(doc.file_type, "application/octet-stream")
-    filename = doc.file_name or f"cv_{document_id}.{doc.file_type}"
-
-    return Response(
-        content=result,
-        media_type=media_type,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    # result is now a signed URL — redirect the client directly to Cloudinary
+    return RedirectResponse(url=result, status_code=302)
