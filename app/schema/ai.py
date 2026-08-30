@@ -1,5 +1,5 @@
-from pydantic import BaseModel, ConfigDict, Field
-from typing import List, Dict, Optional, Any
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from typing import List, Dict, Optional, Any, Union
 from datetime import datetime
 
 
@@ -42,6 +42,32 @@ class StructuredCvProject(BaseModel):
     link: Optional[str] = None
 
 
+class StructuredCvCertification(BaseModel):
+    """
+    Certifications can come back from the LLM as either a plain string
+    ("AWS Solutions Architect") or a richer object
+    {"name": "...", "issuer": "...", "expiration_date": "..."}.
+    Both are normalised into this model.
+    """
+    name: str
+    issuer: Optional[str] = None
+    issue_date: Optional[str] = None
+    expiration_date: Optional[str] = None
+
+    @classmethod
+    def from_raw(cls, value: Union[str, dict]) -> "StructuredCvCertification":
+        if isinstance(value, str):
+            return cls(name=value)
+        if isinstance(value, dict):
+            return cls(
+                name=value.get("name") or value.get("title") or str(value),
+                issuer=value.get("issuer") or value.get("organization"),
+                issue_date=value.get("issue_date") or value.get("date"),
+                expiration_date=value.get("expiration_date") or value.get("expiry"),
+            )
+        return cls(name=str(value))
+
+
 class StructuredCvData(BaseModel):
     personal_info: StructuredCvPersonal
     professional_summary: str
@@ -49,7 +75,16 @@ class StructuredCvData(BaseModel):
     skills: Dict[str, List[str]] = Field(default_factory=dict)
     education: List[StructuredCvEducation] = Field(default_factory=list)
     projects: List[StructuredCvProject] = Field(default_factory=list)
-    certifications: List[str] = Field(default_factory=list)
+    certifications: List[StructuredCvCertification] = Field(default_factory=list)
+
+    @field_validator("certifications", mode="before")
+    @classmethod
+    def coerce_certifications(cls, values: list) -> list:
+        """Accept both plain strings and objects from LLM output."""
+        return [
+            StructuredCvCertification.from_raw(v) if not isinstance(v, StructuredCvCertification) else v
+            for v in (values or [])
+        ]
 
     model_config = ConfigDict(from_attributes=True)
 

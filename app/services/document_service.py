@@ -275,7 +275,18 @@ def render_docx_bytes(cv_data: StructuredCvData) -> bytes:
     if cv_data.certifications:
         add_heading("Certifications", level=2)
         for cert in cv_data.certifications:
-            add_bullet(cert)
+            # cert is a StructuredCvCertification object; build a readable label
+            if hasattr(cert, "name"):
+                label = cert.name
+                if cert.issuer:
+                    label += f" — {cert.issuer}"
+                if cert.expiration_date:
+                    label += f" (exp. {cert.expiration_date})"
+                elif cert.issue_date:
+                    label += f" ({cert.issue_date})"
+            else:
+                label = str(cert)
+            add_bullet(label)
 
     # ── Serialise to bytes ─────────────────────────────────────────────────
     buf = io.BytesIO()
