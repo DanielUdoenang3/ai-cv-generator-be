@@ -10,6 +10,9 @@ from app.api.controller.admin.submission import (
     edit_admin_message_controller,
     delete_admin_message_controller,
     mark_admin_read_controller,
+    save_resume_text_controller,
+    update_job_description_controller,
+    tailor_resume_controller,
 )
 
 admin_submission_router = APIRouter(prefix="/submissions", tags=["Admin Submission Management"])
@@ -113,5 +116,41 @@ admin_submission_router.add_api_route(
     description=(
         "Delete any message in the conversation. "
         "Sub-admins restricted to their assigned submissions."
+    ),
+)
+
+# ── Tailor Resume ──────────────────────────────────────────────────────────
+
+admin_submission_router.add_api_route(
+    "/{submission_id}/resume-text",
+    endpoint=save_resume_text_controller,
+    methods=["PATCH"],
+    summary="Save Resume Text",
+    description=(
+        "Persist the candidate's plain-text resume against this submission. "
+        "Saved once so it does not need to be re-pasted on every generation cycle."
+    ),
+)
+
+admin_submission_router.add_api_route(
+    "/{submission_id}/job-description",
+    endpoint=update_job_description_controller,
+    methods=["PATCH"],
+    summary="Update Job Description",
+    description=(
+        "Update or clear the job description for the current tailoring cycle. "
+        "Pass null or empty string to clear after clicking DONE."
+    ),
+)
+
+admin_submission_router.add_api_route(
+    "/{submission_id}/tailor",
+    endpoint=tailor_resume_controller,
+    methods=["POST"],
+    summary="Tailor Resume",
+    description=(
+        "Single-action endpoint that generates both the tailored resume and cover letter "
+        "in one LLM call, renders all 4 files (resume PDF, resume DOCX, cover letter PDF, "
+        "cover letter DOCX), uploads to Cloudinary, and returns download links."
     ),
 )

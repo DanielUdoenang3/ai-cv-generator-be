@@ -1,8 +1,15 @@
 from fastapi import Depends
 from sqlalchemy.orm import Session
 from app.utils.database import get_db
-from app.schema.auth import CreateAdmin, AdminLogin, AdminProfileUpdate
-from app.services.admin.auth import create_admin, login_admin, get_admin_profile, update_admin_profile
+from app.schema.auth import CreateAdmin, AdminLogin, AdminProfileUpdate, ForgotPasswordRequest, ResetPasswordRequest
+from app.services.admin.auth import (
+    create_admin,
+    login_admin,
+    get_admin_profile,
+    update_admin_profile,
+    forgot_password,
+    reset_password,
+)
 from app.models.admins import Admin
 
 from app.services import get_current_admin, get_current_super_admin, get_current_sub_admin
@@ -32,3 +39,17 @@ async def update_admin_profile_controller(
     db: Session = Depends(get_db),
 ):
     return await update_admin_profile(current_admin=current_admin, data=data, db=db)
+
+
+async def forgot_password_controller(
+    data: ForgotPasswordRequest,
+    db: Session = Depends(get_db),
+):
+    return await forgot_password(data=data, db=db)
+
+
+async def reset_password_controller(
+    data: ResetPasswordRequest,
+    db: Session = Depends(get_db),
+):
+    return await reset_password(data=data, db=db)

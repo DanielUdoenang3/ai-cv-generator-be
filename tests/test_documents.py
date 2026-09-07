@@ -14,7 +14,7 @@ Covers:
 """
 
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
@@ -272,35 +272,21 @@ class TestDocumentDownload:
         return resp.json()["data"][0]["id"]
 
     def test_admin_download_pdf(self, client):
-        """Admin can download a rendered PDF as binary bytes."""
+        """Admin download redirects to a signed Cloudinary URL (302)."""
         super_headers = setup_super_admin(client)
         submission_id, _, ai_gen_id = create_submission_and_generate(
             client, super_headers, email="dl.pdf@example.com"
         )
         doc_id = self._render_and_get_doc_id(client, super_headers, submission_id, ai_gen_id, "pdf")
 
-        with patch("httpx.AsyncClient.get") as mock_get:
-            mock_response = MagicMock()
-            mock_response.content = MOCK_PDF_BYTES
-            mock_response.raise_for_status = MagicMock()
-            mock_get.return_value.__aenter__ = lambda s: s
-            mock_get.return_value.__aexit__ = MagicMock(return_value=False)
-
-            import httpx
-            with patch("httpx.AsyncClient") as mock_client_cls:
-                mock_async_client = MagicMock()
-                mock_async_client.__aenter__ = MagicMock(return_value=mock_async_client)
-                mock_async_client.__aexit__ = MagicMock(return_value=False)
-                mock_async_client.get = MagicMock(return_value=mock_response)
-                mock_client_cls.return_value = mock_async_client
-
-                resp = client.get(
-                    f"/api/v1/admin/submissions/{submission_id}/documents/{doc_id}/download",
-                    headers=super_headers,
-                )
-
-        # Since download hits Cloudinary, in test we just verify 200 or 502
-        assert resp.status_code in [200, 502]
+        # Disable redirect following — we verify the redirect itself, not what it points to
+        resp = client.get(
+            f"/api/v1/admin/submissions/{submission_id}/documents/{doc_id}/download",
+            headers=super_headers,
+            follow_redirects=False,
+        )
+        # Expect a redirect to Cloudinary, or 200 if mock URL is served inline
+        assert resp.status_code in [302, 200]
 
     def test_admin_download_404_wrong_doc_id(self, client):
         """Returns 404 when document_id does not exist."""
@@ -329,7 +315,7 @@ class TestDocumentDownload:
         assert resp.status_code == 403
 
     def test_client_download_valid_token(self, client):
-        """Client with correct token gets 200 (or 502 in test env — Cloudinary mocked)."""
+        """Client with correct token gets a redirect to the signed Cloudinary URL."""
         super_headers = setup_super_admin(client)
         submission_id, client_token, ai_gen_id = create_submission_and_generate(
             client, super_headers, email="cl.valid@example.com"
@@ -339,9 +325,10 @@ class TestDocumentDownload:
         resp = client.get(
             f"/api/v1/public/submissions/{submission_id}/documents/{doc_id}/download",
             headers={"X-Client-Access-Token": client_token},
+            follow_redirects=False,
         )
-        # In test env Cloudinary download will fail → 502, but auth passed (not 401/403)
-        assert resp.status_code in [200, 502]
+        # Valid token → 302 redirect to Cloudinary (not a 401 or 403)
+        assert resp.status_code in [302, 200]
         assert resp.status_code != 403
         assert resp.status_code != 401
 

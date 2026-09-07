@@ -2,443 +2,319 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>{{ cv.personal_info.full_name }} — CV</title>
+  <title>{{ cv.personal_info.full_name }}</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@600;700&display=swap');
-
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
+    /* ── Page setup ──────────────────────────────────────────────────────── */
     @page {
-      size: A4;
+      size: letter;
+      margin: 0.6in;
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
       margin: 0;
+      padding: 0;
     }
 
     body {
-      font-family: 'Inter', sans-serif;
-      font-size: 9.5pt;
-      line-height: 1.5;
-      color: #1a1a2e;
+      font-family: "Times New Roman", Times, serif;
+      font-size: 11pt;
+      line-height: 1.0;
+      color: #000000;
       background: #ffffff;
-      width: 210mm;
-      min-height: 297mm;
+      /* sloppy / no-hyphenation equivalent */
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+      hyphens: none;
     }
 
-    /* ─── Layout ──────────────────────────────────────────────────────── */
-    .page {
-      display: flex;
-      width: 210mm;
-      min-height: 297mm;
+    /* ── Header ──────────────────────────────────────────────────────────── */
+    .header {
+      text-align: center;
+      margin-bottom: 6pt;
     }
 
-    .sidebar {
-      width: 68mm;
-      min-height: 297mm;
-      background: #0f172a;
-      padding: 10mm 7mm;
-      color: #e2e8f0;
-      flex-shrink: 0;
-    }
-
-    .main {
-      flex: 1;
-      padding: 10mm 8mm 10mm 8mm;
-      background: #ffffff;
-    }
-
-    /* ─── Sidebar ─────────────────────────────────────────────────────── */
-    .name-block {
-      margin-bottom: 6mm;
-    }
-
-    .name-block h1 {
-      font-family: 'Playfair Display', serif;
+    .header .full-name {
       font-size: 16pt;
-      font-weight: 700;
-      color: #ffffff;
-      line-height: 1.2;
-      word-break: break-word;
-    }
-
-    .name-block .role {
-      font-size: 8.5pt;
-      font-weight: 400;
-      color: #94a3b8;
-      margin-top: 2mm;
+      font-weight: bold;
       text-transform: uppercase;
-      letter-spacing: 0.08em;
+      letter-spacing: 0.02em;
+      line-height: 1.1;
     }
 
-    .divider {
-      height: 0.4mm;
-      background: #334155;
-      margin: 4mm 0;
+    .header .contact-line {
+      font-size: 11pt;
+      margin-top: 2pt;
     }
 
-    .sidebar-section-title {
-      font-size: 7.5pt;
-      font-weight: 700;
-      letter-spacing: 0.15em;
+    .header .contact-line a {
+      color: #000000;
+      text-decoration: none;
+    }
+
+    /* ── Section headings ────────────────────────────────────────────────── */
+    .section {
+      margin-top: 6pt;
+    }
+
+    .section-title {
+      font-size: 11pt;
+      font-weight: bold;
       text-transform: uppercase;
-      color: #64748b;
-      margin-bottom: 3mm;
+      letter-spacing: 0.01em;
+      border-bottom: 0.8pt solid #000000;
+      padding-bottom: 1pt;
+      margin-bottom: 4pt;
     }
 
-    /* Contact */
-    .contact-list { list-style: none; }
-    .contact-list li {
-      font-size: 8pt;
-      color: #cbd5e1;
-      margin-bottom: 2mm;
-      word-break: break-word;
-      display: flex;
-      align-items: flex-start;
-      gap: 2mm;
-    }
-    .contact-list li .icon {
-      color: #3b82f6;
-      font-size: 9pt;
-      flex-shrink: 0;
-      margin-top: 0.5mm;
-    }
-
-    /* Skills */
-    .skills-section { margin-bottom: 5mm; }
-    .skill-group-title {
-      font-size: 8pt;
-      font-weight: 600;
-      color: #93c5fd;
-      margin-bottom: 1.5mm;
-      margin-top: 3mm;
-    }
-    .skill-pill-row { display: flex; flex-wrap: wrap; gap: 1.5mm; }
-    .skill-pill {
-      background: #1e3a5f;
-      color: #bfdbfe;
-      font-size: 7pt;
-      padding: 1mm 2.5mm;
-      border-radius: 2mm;
-      font-weight: 500;
-    }
-
-    /* Certifications sidebar */
-    .cert-item {
-      font-size: 8pt;
-      color: #cbd5e1;
-      margin-bottom: 1.5mm;
-      padding-left: 3mm;
-      border-left: 2px solid #3b82f6;
-    }
-
-    /* ─── Main ────────────────────────────────────────────────────────── */
-    .section { margin-bottom: 6mm; }
-
-    .section-header {
-      display: flex;
-      align-items: center;
-      gap: 2mm;
-      margin-bottom: 3mm;
-    }
-
-    .section-header h2 {
-      font-family: 'Inter', sans-serif;
-      font-size: 9.5pt;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.12em;
-      color: #0f172a;
-    }
-
-    .section-header-line {
-      flex: 1;
-      height: 0.3mm;
-      background: #e2e8f0;
-    }
-
-    /* Summary */
+    /* ── Professional Summary ────────────────────────────────────────────── */
     .summary-text {
-      font-size: 9pt;
-      color: #374151;
-      line-height: 1.6;
-      font-style: italic;
+      font-size: 11pt;
+      line-height: 1.15;
+      text-align: justify;
     }
 
-    /* Experience */
-    .exp-item { margin-bottom: 4.5mm; page-break-inside: avoid; }
+    /* ── Experience ──────────────────────────────────────────────────────── */
+    .exp-block {
+      margin-bottom: 4pt;
+      page-break-inside: avoid;
+    }
 
-    .exp-header {
+    /* Company line: bold company+location left, date right */
+    .exp-company-row {
       display: flex;
       justify-content: space-between;
-      align-items: flex-start;
+      align-items: baseline;
     }
 
-    .exp-title {
-      font-size: 10pt;
-      font-weight: 700;
-      color: #0f172a;
+    .exp-company-name {
+      font-weight: bold;
+      font-size: 11pt;
+    }
+
+    /* Role line: italic left, date right */
+    .exp-role-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+
+    .exp-role {
+      font-style: italic;
+      font-size: 11pt;
     }
 
     .exp-dates {
-      font-size: 7.5pt;
-      color: #64748b;
+      font-size: 11pt;
       white-space: nowrap;
-      margin-left: 4mm;
-    }
-
-    .exp-company {
-      font-size: 8.5pt;
-      font-weight: 500;
-      color: #2563eb;
-      margin-top: 0.5mm;
-    }
-
-    .exp-location {
-      font-size: 7.5pt;
-      color: #64748b;
-      margin-left: 2mm;
     }
 
     .exp-bullets {
-      margin-top: 1.5mm;
-      padding-left: 3.5mm;
-      list-style: none;
+      margin-top: 2pt;
+      padding-left: 0.25in;
+      list-style-type: disc;
     }
 
     .exp-bullets li {
-      font-size: 8.5pt;
-      color: #374151;
-      margin-bottom: 1mm;
-      line-height: 1.5;
-      padding-left: 2.5mm;
-      position: relative;
+      font-size: 11pt;
+      line-height: 1.15;
+      margin-bottom: 2pt;
+      text-align: justify;
     }
 
-    .exp-bullets li::before {
-      content: "▸";
-      color: #2563eb;
-      position: absolute;
-      left: -1mm;
+    /* ── Core Skills ─────────────────────────────────────────────────────── */
+    .skills-list {
+      padding-left: 0.25in;
+      list-style-type: disc;
     }
 
-    /* Education */
-    .edu-item { margin-bottom: 3.5mm; page-break-inside: avoid; }
-
-    .edu-degree {
-      font-size: 9.5pt;
-      font-weight: 700;
-      color: #0f172a;
+    .skills-list li {
+      font-size: 11pt;
+      line-height: 1.3;
+      margin-bottom: 2pt;
     }
 
-    .edu-institution {
-      font-size: 8.5pt;
-      color: #2563eb;
-      font-weight: 500;
+    .skills-list li .skill-label {
+      font-weight: bold;
     }
 
-    .edu-meta {
-      font-size: 7.5pt;
-      color: #64748b;
-      margin-top: 0.5mm;
+    /* ── Technical Tools ─────────────────────────────────────────────────── */
+    .tools-text {
+      font-size: 11pt;
+      line-height: 1.15;
+      text-align: justify;
     }
 
-    .edu-honors {
-      font-size: 8pt;
-      color: #374151;
-      font-style: italic;
+    /* ── Certifications ──────────────────────────────────────────────────── */
+    .cert-list {
+      padding-left: 0.25in;
+      list-style-type: disc;
     }
 
-    /* Projects */
-    .project-item { margin-bottom: 3.5mm; page-break-inside: avoid; }
-
-    .project-title {
-      font-size: 9.5pt;
-      font-weight: 700;
-      color: #0f172a;
+    .cert-list li {
+      font-size: 11pt;
+      line-height: 1.3;
+      margin-bottom: 2pt;
     }
 
-    .project-link {
-      font-size: 7.5pt;
-      color: #2563eb;
-      margin-left: 2mm;
+    /* ── Education ───────────────────────────────────────────────────────── */
+    .edu-line {
+      font-size: 11pt;
+      line-height: 1.4;
     }
 
-    .project-desc {
-      font-size: 8.5pt;
-      color: #374151;
-      margin-top: 1mm;
-      line-height: 1.5;
+    /* ── Projects (optional) ─────────────────────────────────────────────── */
+    .proj-block {
+      margin-bottom: 4pt;
+      page-break-inside: avoid;
     }
 
-    .project-stack { display: flex; flex-wrap: wrap; gap: 1.5mm; margin-top: 1.5mm; }
+    .proj-title {
+      font-weight: bold;
+      font-size: 11pt;
+    }
 
-    .stack-tag {
-      background: #eff6ff;
-      color: #1d4ed8;
-      font-size: 7pt;
-      font-weight: 600;
-      padding: 0.5mm 2mm;
-      border-radius: 1.5mm;
+    .proj-desc {
+      font-size: 11pt;
+      line-height: 1.15;
+      margin-top: 1pt;
+    }
+
+    .proj-stack {
+      font-size: 10pt;
+      margin-top: 1pt;
+      color: #333333;
     }
   </style>
 </head>
 <body>
-<div class="page">
 
-  <!-- ══════════════════════════════ SIDEBAR ══════════════════════════════ -->
-  <aside class="sidebar">
-
-    <div class="name-block">
-      <h1>{{ cv.personal_info.full_name }}</h1>
-      {% if cv.personal_info.target_role %}
-      <div class="role">{{ cv.personal_info.target_role }}</div>
-      {% endif %}
+  <!-- ══════════ HEADER ══════════ -->
+  <div class="header">
+    <div class="full-name">{{ cv.personal_info.full_name }}</div>
+    <div class="contact-line">
+      {%- set parts = [] -%}
+      {%- if cv.personal_info.location  -%}{%- set _ = parts.append(cv.personal_info.location)  -%}{%- endif -%}
+      {%- if cv.personal_info.phone     -%}{%- set _ = parts.append(cv.personal_info.phone)     -%}{%- endif -%}
+      {%- if cv.personal_info.email     -%}{%- set _ = parts.append(cv.personal_info.email)     -%}{%- endif -%}
+      {%- if cv.personal_info.linkedin  -%}{%- set _ = parts.append(cv.personal_info.linkedin)  -%}{%- endif -%}
+      {%- if cv.personal_info.portfolio -%}{%- set _ = parts.append(cv.personal_info.portfolio) -%}{%- endif -%}
+      {{ parts | join(" | ") }}
     </div>
+  </div>
 
-    <div class="divider"></div>
+  <!-- ══════════ PROFESSIONAL SUMMARY ══════════ -->
+  {% if cv.professional_summary %}
+  <div class="section">
+    <div class="section-title">Professional Summary</div>
+    <p class="summary-text">{{ cv.professional_summary }}</p>
+  </div>
+  {% endif %}
 
-    <!-- Contact -->
-    <div class="sidebar-section-title">Contact</div>
-    <ul class="contact-list">
-      {% if cv.personal_info.email %}
-      <li><span class="icon">✉</span> {{ cv.personal_info.email }}</li>
-      {% endif %}
-      {% if cv.personal_info.phone %}
-      <li><span class="icon">✆</span> {{ cv.personal_info.phone }}</li>
-      {% endif %}
-      {% if cv.personal_info.location %}
-      <li><span class="icon">⌖</span> {{ cv.personal_info.location }}</li>
-      {% endif %}
-      {% if cv.personal_info.linkedin %}
-      <li><span class="icon">in</span> {{ cv.personal_info.linkedin }}</li>
-      {% endif %}
-      {% if cv.personal_info.portfolio %}
-      <li><span class="icon">🔗</span> {{ cv.personal_info.portfolio }}</li>
-      {% endif %}
-    </ul>
-
-    <!-- Skills -->
-    {% if cv.skills %}
-    <div class="divider"></div>
-    <div class="sidebar-section-title">Skills</div>
-    <div class="skills-section">
-      {% for group_name, items in cv.skills.items() %}
-      <div class="skill-group-title">{{ group_name }}</div>
-      <div class="skill-pill-row">
-        {% for skill in items %}
-        <span class="skill-pill">{{ skill }}</span>
+  <!-- ══════════ PROFESSIONAL EXPERIENCE ══════════ -->
+  {% if cv.work_experience %}
+  <div class="section">
+    <div class="section-title">Professional Experience</div>
+    {% for job in cv.work_experience %}
+    <div class="exp-block">
+      <!-- Company + location row -->
+      <div class="exp-company-row">
+        <span class="exp-company-name">
+          {{ job.company }}{% if job.location %}, {{ job.location }}{% endif %}
+        </span>
+      </div>
+      <!-- Role + dates row -->
+      <div class="exp-role-row">
+        <span class="exp-role">{{ job.job_title }}</span>
+        <span class="exp-dates">
+          {{ job.start_date or "" }}{% if job.start_date %} &#8211; {% endif %}{{ "Present" if job.is_current else (job.end_date or "") }}
+        </span>
+      </div>
+      {% if job.bullet_points %}
+      <ul class="exp-bullets">
+        {% for point in job.bullet_points %}
+        <li>{{ point }}</li>
         {% endfor %}
-      </div>
-      {% endfor %}
+      </ul>
+      {% endif %}
     </div>
-    {% endif %}
-
-    <!-- Certifications -->
-    {% if cv.certifications %}
-    <div class="divider"></div>
-    <div class="sidebar-section-title">Certifications</div>
-    {% for cert in cv.certifications %}
-    <div class="cert-item">{{ cert }}</div>
     {% endfor %}
-    {% endif %}
+  </div>
+  {% endif %}
 
-  </aside>
-
-  <!-- ══════════════════════════════ MAIN ══════════════════════════════════ -->
-  <main class="main">
-
-    <!-- Professional Summary -->
-    {% if cv.professional_summary %}
-    <div class="section">
-      <div class="section-header">
-        <h2>Profile</h2>
-        <div class="section-header-line"></div>
-      </div>
-      <p class="summary-text">{{ cv.professional_summary }}</p>
-    </div>
-    {% endif %}
-
-    <!-- Work Experience -->
-    {% if cv.work_experience %}
-    <div class="section">
-      <div class="section-header">
-        <h2>Experience</h2>
-        <div class="section-header-line"></div>
-      </div>
-      {% for job in cv.work_experience %}
-      <div class="exp-item">
-        <div class="exp-header">
-          <span class="exp-title">{{ job.job_title }}</span>
-          <span class="exp-dates">
-            {{ job.start_date or '' }}{% if job.start_date %} – {% endif %}{{ 'Present' if job.is_current else (job.end_date or '') }}
-          </span>
-        </div>
-        <div>
-          <span class="exp-company">{{ job.company }}</span>
-          {% if job.location %}
-          <span class="exp-location">· {{ job.location }}</span>
-          {% endif %}
-        </div>
-        {% if job.bullet_points %}
-        <ul class="exp-bullets">
-          {% for point in job.bullet_points %}
-          <li>{{ point }}</li>
-          {% endfor %}
-        </ul>
-        {% endif %}
-      </div>
+  <!-- ══════════ CORE SKILLS ══════════ -->
+  {% if cv.skills %}
+  <div class="section">
+    <div class="section-title">Core Skills</div>
+    <ul class="skills-list">
+      {% for group_name, items in cv.skills.items() %}
+      <li>
+        <span class="skill-label">{{ group_name }}:</span>
+        {{ items | join(", ") }}
+      </li>
       {% endfor %}
-    </div>
-    {% endif %}
+    </ul>
+  </div>
+  {% endif %}
 
-    <!-- Education -->
-    {% if cv.education %}
-    <div class="section">
-      <div class="section-header">
-        <h2>Education</h2>
-        <div class="section-header-line"></div>
-      </div>
-      {% for edu in cv.education %}
-      <div class="edu-item">
-        <div class="edu-degree">{{ edu.degree }}</div>
-        <div class="edu-institution">{{ edu.institution }}</div>
-        <div class="edu-meta">
-          {{ edu.location or '' }}{% if edu.location and edu.graduation_year %} · {% endif %}{{ edu.graduation_year or '' }}
-        </div>
-        {% if edu.honors %}
-        <div class="edu-honors">{{ edu.honors }}</div>
-        {% endif %}
-      </div>
+  <!-- ══════════ TECHNICAL & INDUSTRY TOOLS ══════════ -->
+  {% if cv.technical_tools %}
+  <div class="section">
+    <div class="section-title">Technical &amp; Industry Tools</div>
+    <p class="tools-text">{{ cv.technical_tools }}</p>
+  </div>
+  {% endif %}
+
+  <!-- ══════════ CERTIFICATIONS ══════════ -->
+  {% if cv.certifications %}
+  <div class="section">
+    <div class="section-title">Certifications</div>
+    <ul class="cert-list">
+      {% for cert in cv.certifications %}
+      <li>
+        {{ cert.name }}
+        {%- if cert.issuer %} | {{ cert.issuer }}{% endif %}
+        {%- if cert.expiration_date %} (exp. {{ cert.expiration_date }})
+        {%- elif cert.issue_date %} ({{ cert.issue_date }}){% endif %}
+      </li>
       {% endfor %}
-    </div>
-    {% endif %}
+    </ul>
+  </div>
+  {% endif %}
 
-    <!-- Projects -->
-    {% if cv.projects %}
-    <div class="section">
-      <div class="section-header">
-        <h2>Projects</h2>
-        <div class="section-header-line"></div>
-      </div>
-      {% for proj in cv.projects %}
-      <div class="project-item">
-        <span class="project-title">{{ proj.title }}</span>
-        {% if proj.link %}
-        <span class="project-link">{{ proj.link }}</span>
-        {% endif %}
-        <div class="project-desc">{{ proj.description }}</div>
-        {% if proj.tech_stack %}
-        <div class="project-stack">
-          {% for tech in proj.tech_stack %}
-          <span class="stack-tag">{{ tech }}</span>
-          {% endfor %}
-        </div>
-        {% endif %}
-      </div>
-      {% endfor %}
+  <!-- ══════════ EDUCATION ══════════ -->
+  {% if cv.education %}
+  <div class="section">
+    <div class="section-title">Education</div>
+    {% for edu in cv.education %}
+    <div class="edu-line">
+      {{ edu.degree }} | {{ edu.institution }}
+      {%- if edu.location %}, {{ edu.location }}{% endif %}
+      {%- if edu.start_date and edu.graduation_year %} | {{ edu.start_date }} &#8211; {{ edu.graduation_year }}
+      {%- elif edu.graduation_year %} | {{ edu.graduation_year }}
+      {%- elif edu.start_date %} | {{ edu.start_date }}{% endif %}
+      {%- if edu.honors %} | GPA: {{ edu.honors }}{% endif %}
     </div>
-    {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
 
-  </main>
-</div>
+  <!-- ══════════ PROJECTS (optional) ══════════ -->
+  {% if cv.projects %}
+  <div class="section">
+    <div class="section-title">Projects</div>
+    {% for proj in cv.projects %}
+    <div class="proj-block">
+      <span class="proj-title">{{ proj.title }}</span>
+      {% if proj.link %} &mdash; <a href="{{ proj.link }}">{{ proj.link }}</a>{% endif %}
+      <p class="proj-desc">{{ proj.description }}</p>
+      {% if proj.tech_stack %}
+      <p class="proj-stack"><strong>Stack:</strong> {{ proj.tech_stack | join(", ") }}</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
 </body>
 </html>

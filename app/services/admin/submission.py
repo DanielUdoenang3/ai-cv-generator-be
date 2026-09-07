@@ -46,6 +46,7 @@ def _serialize_submission(submission: Submission) -> dict:
         "target_company": submission.target_company,
         "priority": submission.priority,
         "job_description": submission.job_description,
+        "saved_resume_text": submission.saved_resume_text,
         "existing_cv_url": submission.existing_cv_url,
         "raw_data": submission.raw_data,
         "created_at": submission.created_at,
@@ -54,9 +55,21 @@ def _serialize_submission(submission: Submission) -> dict:
         "client": {
             "id": client.id,
             "first_name": client.first_name,
+            "middle_name": client.middle_name,
             "last_name": client.last_name,
             "email": client.email,
             "phone": client.phone,
+            "city": client.city,
+            "state": client.state,
+            "country": client.country,
+            "linkedin_url": client.linkedin_url,
+            "portfolio_url": client.portfolio_url,
+            "resume_file_url": client.resume_file_url,
+            "desired_job_titles": client.desired_job_titles,
+            "preferred_work_arrangement": client.preferred_work_arrangement,
+            "expected_salary_range": client.expected_salary_range,
+            "citizenship_status": client.citizenship_status,
+            "visa_sponsorship_required": client.visa_sponsorship_required,
         } if client else None,
         "assigned_to": {
             "id": assigned_to.id,
@@ -728,6 +741,115 @@ async def delete_admin_message(
         status_code=status.HTTP_200_OK,
         message="Message deleted successfully",
         data={"id": message_id},
+    )
+
+
+# ---------------------------------------------------------------------------
+# SAVE RESUME TEXT  (sub-admin persists resume once per submission)
+# ---------------------------------------------------------------------------
+
+async def save_resume_text(
+    submission_id: str,
+    saved_resume_text: str,
+    current_admin: Admin,
+    db: Session,
+):
+    """
+    Persist the sub-admin's pasted resume text against the submission so it
+    does not need to be re-pasted on every generation cycle.
+
+    The text is stored on ``submissions.saved_resume_text`` (Text column) and
+    is used by the AI service as the primary source for tailoring.
+    """
+    submission = db.query(Submission).filter(Submission.id == submission_id).first()
+    if not submission:
+        return error_response(
+            status_code=status.HTTP_404_NOT_FOUND,
+            message="Submission not found",
+        )
+
+    is_restricted = current_admin.role == AdminRole.SUB_ADMIN.value
+    if is_restricted and submission.assigned_to_id != current_admin.id:
+        return error_response(
+            status_code=status.HTTP_403_FORBIDDEN,
+            message="You are not assigned to this submission",
+        )
+
+    submission.saved_resume_text = saved_resume_text.strip()
+
+    activity = SubmissionActivity(
+        submission_id=submission.id,
+        activity_type="resume_text_saved",
+        title="Resume Text Saved",
+        description=f"Resume text saved by {current_admin.first_name} {current_admin.last_name}",
+        actor_id=current_admin.id,
+    )
+    db.add(activity)
+    db.commit()
+    db.refresh(submission)
+
+    return success_response(
+        status_code=status.HTTP_200_OK,
+        message="Resume text saved successfully",
+        data={
+            "submission_id":    submission.id,
+            "saved_resume_text": submission.saved_resume_text,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# UPDATE JOB DESCRIPTION  (cleared at the end of each tailor cycle)
+# ---------------------------------------------------------------------------
+
+async def update_job_description(
+    submission_id: str,
+    job_description: Optional[str],
+    current_admin: Admin,
+    db: Session,
+):
+    """
+    Update (or clear) the job description on a submission.
+
+    Passing ``null`` / empty string clears the field so the sub-admin can
+    start a fresh tailoring cycle without leaving stale JD content behind.
+    """
+    submission = db.query(Submission).filter(Submission.id == submission_id).first()
+    if not submission:
+        return error_response(
+            status_code=status.HTTP_404_NOT_FOUND,
+            message="Submission not found",
+        )
+
+    is_restricted = current_admin.role == AdminRole.SUB_ADMIN.value
+    if is_restricted and submission.assigned_to_id != current_admin.id:
+        return error_response(
+            status_code=status.HTTP_403_FORBIDDEN,
+            message="You are not assigned to this submission",
+        )
+
+    # Normalise: treat empty string as None (clears the field)
+    submission.job_description = job_description.strip() if job_description and job_description.strip() else None
+
+    action = "updated" if submission.job_description else "cleared"
+    activity = SubmissionActivity(
+        submission_id=submission.id,
+        activity_type="job_description_updated",
+        title=f"Job Description {action.title()}",
+        description=f"Job description {action} by {current_admin.first_name} {current_admin.last_name}",
+        actor_id=current_admin.id,
+    )
+    db.add(activity)
+    db.commit()
+    db.refresh(submission)
+
+    return success_response(
+        status_code=status.HTTP_200_OK,
+        message=f"Job description {action} successfully",
+        data={
+            "submission_id":   submission.id,
+            "job_description": submission.job_description,
+        },
     )
 
 

@@ -44,7 +44,8 @@ class Settings(BaseSettings):
 
     # Email configurations (Resend)
     RESEND_API_KEY: str = config("RESEND_API_KEY", default="")
-    FROM_EMAIL: str = config("FROM_EMAIL", default="noreply@example.com")
+    # FROM_EMAIL: str = config("FROM_EMAIL", default="noreply@example.com")
+    RESEND_EMAIL: str = config("RESEND_EMAIL")
 
     # Dashboard
     DASHBOARD: str = config("DASHBOARD", default="http://localhost:3000")

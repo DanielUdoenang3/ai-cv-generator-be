@@ -51,9 +51,12 @@ def test_prompt_seeding_and_stats(client):
     assert res.status_code == 200
     data = res.json()["data"]
 
+    # 4 default prompts seeded (Technology, Product, Executive, Marketing)
     assert data["stats"]["total_prompts"] == 4
+    # 3 active (Marketing is seeded inactive), 1 inactive
     assert data["stats"]["active_prompts"] == 3
-    assert data["stats"]["total_usage"] == 357
+    # Fresh DB in tests — all usage counts start at 0
+    assert data["stats"]["total_usage"] == 0
 
     prompts = data["prompts"]
     categories = [p["category"] for p in prompts]
@@ -193,10 +196,10 @@ def test_smart_prompt_matching_and_usage_counter(client):
     )
     assert gen_pm.status_code == 200
 
-    # Verify Product Manager CV prompt usage count increased by 1 (89 -> 90)
+    # Verify Product Manager CV prompt usage count increased by 1 (0 -> 1 in clean test DB)
     prompts_after = client.get("/api/v1/admin/prompts", headers=super_headers).json()["data"]["prompts"]
     pm_prompt = next(p for p in prompts_after if p["name"] == "Product Manager CV")
-    assert pm_prompt["usage_count"] == 90
+    assert pm_prompt["usage_count"] == 1
 
     # Submission matching deactivated category (Marketing) should fall back to an active prompt
     sub_mkt = client.post(

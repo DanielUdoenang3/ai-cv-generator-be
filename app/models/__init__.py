@@ -9,16 +9,24 @@ from app.models.documents import Document
 from app.models.ai_generations import AiGeneration
 from app.models.enums import (
     AdminRole,
+    DisabilityStatus,
     Gender,
+    RaceEthnicity,
+    SecurityClearance,
+    SexualOrientation,
     SubmissionStatus,
     MessageSenderType,
     TaskPriority,
     TaskStatus,
     DocumentType,
     AiGenerationStatus,
+    VeteranStatus,
+    VisaSponsorship,
+    WorkArrangement,
 )
 
 __all__ = [
+    # Models
     "Admin",
     "Client",
     "Submission",
@@ -29,12 +37,20 @@ __all__ = [
     "Prompt",
     "Document",
     "AiGeneration",
+    # Enums
     "AdminRole",
+    "DisabilityStatus",
     "Gender",
+    "RaceEthnicity",
+    "SecurityClearance",
+    "SexualOrientation",
     "SubmissionStatus",
     "MessageSenderType",
     "TaskPriority",
     "TaskStatus",
     "DocumentType",
     "AiGenerationStatus",
+    "VeteranStatus",
+    "VisaSponsorship",
+    "WorkArrangement",
 ]

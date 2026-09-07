@@ -82,14 +82,13 @@ def test_dashboard_stats_and_recent_submissions(client):
     assert stats_data["completed"] == 1
     assert stats_data["active_chats"] == 1
 
-    # Sub Admin stats: 0 new (since they are unassigned), 1 in_progress, 1 completed, 1 active chat
+    # Sub Admin stats: service returns empty {} for sub-admins (no stats dashboard for this role)
     sub_stats_res = client.get("/api/v1/admin/dashboard/stats", headers=sub_headers)
     assert sub_stats_res.status_code == 200
-    sub_stats_data = sub_stats_res.json()["data"]
-    assert sub_stats_data["new_requests"] == 0
-    assert sub_stats_data["in_progress"] == 1
-    assert sub_stats_data["completed"] == 1
-    assert sub_stats_data["active_chats"] == 1
+    sub_stats_data = sub_stats_res.json()
+    assert sub_stats_data["status"] == "success"
+    # Sub-admins receive an empty data block — no stat counters exposed
+    assert sub_stats_data["data"] == {}
 
     # ------------------- TEST RECENT SUBMISSIONS -------------------
 

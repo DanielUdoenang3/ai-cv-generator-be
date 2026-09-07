@@ -17,6 +17,10 @@ class Admin(BaseModel):
     last_login: datetime = Column(DateTime, nullable=True)
     created_by: str = Column(String, nullable=True)
     updated_by: str = Column(String, nullable=True)
+
+    # Password reset via magic link
+    reset_token: str = Column(String, unique=True, index=True, nullable=True)
+    reset_token_expires_at: datetime = Column(DateTime(timezone=True), nullable=True)
     
     def __repr__(self):
         return f"Admin(id={self.id}, first_name={self.first_name}, last_name={self.last_name}, email={self.email}, role={self.role})"

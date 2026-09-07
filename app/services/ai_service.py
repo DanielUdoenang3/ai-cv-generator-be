@@ -14,7 +14,7 @@ from app.models.prompts import Prompt
 from app.models.ai_generations import AiGeneration
 from app.models.activities import SubmissionActivity
 from app.models.enums import AdminRole, AiGenerationStatus, SubmissionStatus, MessageSenderType
-from app.schema.ai import CvGenerateRequest, StructuredCvData, StructuredCvPersonal, StructuredCvExperience, StructuredCvEducation, StructuredCvProject
+from app.schema.ai import CvGenerateRequest, StructuredCvData, StructuredCvPersonal, StructuredCvExperience, StructuredCvEducation, StructuredCvProject, StructuredCoverLetter
 from app.services.admin.prompt import get_active_master_prompt, seed_default_prompts_if_empty
 from app.utils.settings import settings
 from app.utils.custom_response import success_response, error_response
@@ -169,33 +169,35 @@ You MUST return a single valid JSON object with EXACTLY these top-level keys
     "full_name": "<string>",
     "email": "<string or null>",
     "phone": "<string or null>",
-    "location": "<string or null>",
+    "location": "<City, State string or null>",
     "linkedin": "<string or null>",
     "portfolio": "<string or null>",
     "target_role": "<string or null>"
   },
-  "professional_summary": "<string>",
+  "professional_summary": "<string — 3 to 5 sentences, metrics-rich, ATS-optimised>",
   "work_experience": [
     {
       "job_title": "<string>",
       "company": "<string>",
       "location": "<string or null>",
-      "start_date": "<string or null>",
-      "end_date": "<string or null>",
-      "is_current": <boolean>,
-      "bullet_points": ["<string>", ...]
+      "start_date": "<string e.g. 'Sept 2024' or null>",
+      "end_date": "<string e.g. 'Feb 2023' or null>",
+      "is_current": <boolean — true only for the most recent role if still active>,
+      "bullet_points": ["<string — one sentence, starts with action verb, includes metric>", ...]
     }
   ],
   "skills": {
-    "<category name>": ["<skill>", ...]
+    "<category label e.g. 'B2B SaaS Product Management'>": ["<skill>", ...]
   },
+  "technical_tools": "<single comma-separated string of all tools and technologies e.g. 'SQL, Python, Salesforce, Jira, Power BI, Tableau, AWS, Azure, ...' — DO NOT use a list, must be a plain string>",
   "education": [
     {
-      "degree": "<string>",
-      "institution": "<string>",
+      "degree": "<string e.g. 'PhD. in Bioenvironmental Science'>",
+      "institution": "<string e.g. 'Morgan State University, Baltimore'>",
       "location": "<string or null>",
-      "graduation_year": "<string or null>",
-      "honors": "<string or null>"
+      "start_date": "<string e.g. 'Jan 2018' or null>",
+      "graduation_year": "<string e.g. 'May 2022' or null>",
+      "honors": "<GPA as string e.g. '4.0' or null>"
     }
   ],
   "projects": [
@@ -206,14 +208,26 @@ You MUST return a single valid JSON object with EXACTLY these top-level keys
       "link": "<string or null>"
     }
   ],
-  "certifications": ["<string>", ...]
+  "certifications": [
+    {
+      "name": "<string e.g. 'Salesforce Administrator (Certified)'>",
+      "issuer": "<string or null>",
+      "issue_date": "<string or null>",
+      "expiration_date": "<string or null>"
+    }
+  ]
 }
 
 RULES:
-- The top-level key for personal details MUST be "personal_info" (not "contact_information", not "personal_details", not anything else).
-- The top-level key for work history MUST be "work_experience" (not "experience", not "employment").
+- "personal_info" MUST be exactly that key name — never "contact_information" or "personal_details".
+- "work_experience" MUST be exactly that key name — never "experience" or "employment".
+- "technical_tools" MUST be a plain string, NOT an array or object.
+- "skills" groups tools by category — "technical_tools" is a separate flat paragraph of ALL tools.
+- "education" entries MUST include both "start_date" and "graduation_year" when known.
+- "certifications" MUST be a list of objects, not plain strings.
 - Do NOT wrap the output in a "cv", "resume", or any other parent key.
 - Return ONLY the JSON object. No markdown, no explanation, no code fences.
+- Do NOT fabricate any dates, companies, metrics, or qualifications not present in the source data.
 """
 
 
@@ -778,4 +792,551 @@ async def get_submission_generations_service(
             }
             for g in generations
         ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Cover-letter JSON schema — appended alongside the CV schema instruction
+# so a single LLM call returns both documents.
+# ---------------------------------------------------------------------------
+_COVER_LETTER_SCHEMA_EXTENSION = """
+
+Additionally, you MUST include a second top-level key "cover_letter" in the
+SAME JSON object with EXACTLY this structure:
+
+"cover_letter": {
+  "date": "<full date string e.g. 'August 31, 2026' or null>",
+  "salutation": "<e.g. 'Dear Hiring Manager,'>",
+  "body_paragraphs": [
+    "<paragraph 1>",
+    "<paragraph 2>",
+    "..."
+  ],
+  "sign_off": "<e.g. 'Warm regards,'>",
+  "signatory_name": "<Full Name and credentials e.g. 'Ayobami Adegbite, PhD'>"
+}
+
+Cover letter guidelines:
+- 3–4 concise, high-impact body paragraphs.
+- Each paragraph serves a distinct purpose: opener (why this role/company),
+  core achievement showcase, tool/method proof, culture/fit close.
+- Tone: professional, direct, first-person. No fluff.
+- Reference the target company and role specifically if known.
+- Draw metrics and achievements from the resume data provided.
+- Do NOT fabricate information not present in the source data.
+"""
+
+
+def build_tailor_prompt_context(
+    submission,
+    messages,
+    custom_instructions: Optional[str] = None,
+) -> str:
+    """
+    Build the LLM user-context string for a Tailor Resume call.
+
+    Priority order for resume source:
+    1. submission.saved_resume_text  (pasted and saved by sub-admin — primary)
+    2. submission.raw_data           (structured JSON from intake form — fallback)
+    """
+    client = submission.client
+    client_name = f"{client.first_name} {client.last_name}" if client else "Client"
+
+    parts: list[str] = []
+
+    # ── Client snapshot ───────────────────────────────────────────────────
+    parts.append("=== CLIENT INFORMATION ===")
+    parts.append(f"Full Name: {client_name}")
+    if client:
+        if client.email:
+            parts.append(f"Email: {client.email}")
+        if client.phone:
+            parts.append(f"Phone: {client.phone}")
+        if client.city or client.state or client.country:
+            loc = ", ".join(p for p in [client.city, client.state, client.country] if p)
+            parts.append(f"Location: {loc}")
+        if client.linkedin_url:
+            parts.append(f"LinkedIn: {client.linkedin_url}")
+        if client.portfolio_url:
+            parts.append(f"Portfolio: {client.portfolio_url}")
+        # Desired job titles give the AI direct context about what roles to target
+        if client.desired_job_titles:
+            titles = (
+                ", ".join(client.desired_job_titles)
+                if isinstance(client.desired_job_titles, list)
+                else str(client.desired_job_titles)
+            )
+            parts.append(f"Desired Job Titles: {titles}")
+        if client.expected_salary_range:
+            parts.append(f"Expected Salary Range: {client.expected_salary_range}")
+        if client.preferred_work_arrangement:
+            parts.append(f"Preferred Work Arrangement: {client.preferred_work_arrangement}")
+        if client.citizenship_status:
+            parts.append(f"Work Authorization: {client.citizenship_status}")
+
+    if submission.target_position:
+        parts.append(f"Target Position: {submission.target_position}")
+    if submission.target_company:
+        parts.append(f"Target Company: {submission.target_company}")
+
+    # ── Job description ───────────────────────────────────────────────────
+    if submission.job_description:
+        parts.append(f"\n=== TARGET JOB DESCRIPTION ===\n{submission.job_description}")
+
+    # ── Resume source (saved text takes priority) ─────────────────────────
+    if submission.saved_resume_text and submission.saved_resume_text.strip():
+        parts.append(
+            f"\n=== CANDIDATE RESUME (PRIMARY SOURCE — use this to tailor) ===\n"
+            f"{submission.saved_resume_text.strip()}"
+        )
+    elif submission.raw_data:
+        parts.append(
+            f"\n=== CANDIDATE BACKGROUND DATA (FALLBACK) ===\n{submission.raw_data}"
+        )
+
+    # ── Chat transcript ───────────────────────────────────────────────────
+    if messages:
+        parts.append(
+            "\n=== CLIENT-ADMIN CHAT TRANSCRIPT (ADDITIONAL CONTEXT) ==="
+        )
+        for msg in messages:
+            label = "CLIENT" if msg.sender_type == "client" else "ADMIN"
+            parts.append(f"[{label}]: {msg.message}")
+
+    # ── Admin instructions ────────────────────────────────────────────────
+    if custom_instructions and custom_instructions.strip():
+        parts.append(
+            f"\n=== ADMIN ADDITIONAL INSTRUCTIONS ===\n{custom_instructions.strip()}"
+        )
+
+    return "\n".join(parts)
+
+
+async def tailor_resume_service(
+    submission_id: str,
+    payload,               # TailorResumeRequest
+    current_admin: Admin,
+    db: Session,
+):
+    """
+    Unified Tailor Resume pipeline — one admin action that:
+
+    1. Validates submission + RBAC.
+    2. Selects the AI prompt template.
+    3. Calls LLM once — returns structured CV **and** cover letter JSON.
+    4. Validates both outputs against their Pydantic schemas.
+    5. Persists an AiGeneration record with both JSON blobs.
+    6. Renders resume (PDF + DOCX) and cover letter (PDF + DOCX) — 4 files.
+    7. Uploads all 4 to Cloudinary, saves Document records.
+    8. Returns download links for all 4 files in a single response.
+
+    The sub-admin clicks one button and gets everything back immediately.
+    """
+    from app.services.document_service import (
+        render_cv_to_html,
+        render_cover_letter_to_html,
+        render_pdf_bytes,
+        render_docx_bytes,
+        render_cover_letter_docx_bytes,
+        upload_to_cloudinary,
+    )
+    from app.models.documents import Document
+
+    # ── 1. Validate submission ─────────────────────────────────────────────
+    submission = db.query(Submission).filter(Submission.id == submission_id).first()
+    if not submission:
+        return error_response(
+            status_code=status.HTTP_404_NOT_FOUND,
+            message="Submission not found",
+        )
+
+    is_restricted = current_admin.role == AdminRole.SUB_ADMIN.value
+    if is_restricted and submission.assigned_to_id != current_admin.id:
+        return error_response(
+            status_code=status.HTTP_403_FORBIDDEN,
+            message="You are not assigned to this submission",
+        )
+
+    if not submission.saved_resume_text and not submission.raw_data:
+        return error_response(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            message=(
+                "No resume content found. Please save the candidate's resume text "
+                "before tailoring."
+            ),
+        )
+
+    # ── 2. Prompt selection ────────────────────────────────────────────────
+    prompt_obj = select_smart_prompt_for_submission(
+        submission=submission,
+        prompt_id=payload.prompt_id,
+        db=db,
+    )
+    if not prompt_obj:
+        prompt_obj = get_active_master_prompt(db)
+
+    system_prompt = prompt_obj.content
+
+    # ── 3. Build user context ──────────────────────────────────────────────
+    messages = []
+    if getattr(payload, "include_chat_history", True):
+        from app.models.chats import Conversation
+        conv = db.query(Conversation).filter(
+            Conversation.submission_id == submission_id
+        ).first()
+        if conv:
+            messages = conv.messages or []
+
+    user_context = build_tailor_prompt_context(
+        submission=submission,
+        messages=messages,
+        custom_instructions=getattr(payload, "custom_instructions", None),
+    )
+
+    # ── 4. LLM call — CV + cover letter in one shot ────────────────────────
+    # Extend system prompt with cover letter schema so the model returns both.
+    combined_system = system_prompt + _JSON_SCHEMA_INSTRUCTION + _COVER_LETTER_SCHEMA_EXTENSION
+
+    try:
+        llm_result = await call_llm_provider(
+            provider=getattr(payload, "provider", "openai"),
+            model_name=getattr(payload, "model", None),
+            user_prompt=user_context,
+            system_prompt=combined_system,
+        )
+    except Exception as exc:
+        err_msg = str(exc)
+        logger.error(f"Tailor Resume LLM call failed: {err_msg}")
+
+        no_keys = "No AI provider API key is configured" in err_msg
+        failed_gen = AiGeneration(
+            submission_id=submission_id,
+            model=getattr(payload, "model", None) or "unknown",
+            input_tokens=0,
+            output_tokens=0,
+            cost=0.0,
+            status=AiGenerationStatus.FAILED.value,
+            error_message=err_msg,
+        )
+        db.add(failed_gen)
+        db.commit()
+        return error_response(
+            status_code=(
+                status.HTTP_503_SERVICE_UNAVAILABLE if no_keys
+                else status.HTTP_500_INTERNAL_SERVER_ERROR
+            ),
+            message=err_msg if no_keys else f"AI generation failed: {err_msg}",
+        )
+
+    raw_output = llm_result["structured_cv"]
+
+    # ── 5. Validate outputs ────────────────────────────────────────────────
+    # Extract the cover_letter sub-key before validating the CV portion.
+    cover_letter_raw = raw_output.pop("cover_letter", None)
+
+    try:
+        cv_data = StructuredCvData.model_validate(raw_output)
+    except Exception as exc:
+        logger.error(f"CV schema validation error: {exc}")
+        failed_gen = AiGeneration(
+            submission_id=submission_id,
+            model=llm_result["model_used"],
+            input_tokens=llm_result["input_tokens"],
+            output_tokens=llm_result["output_tokens"],
+            cost=llm_result["cost"],
+            status=AiGenerationStatus.FAILED.value,
+            error_message=f"CV schema validation failed: {exc}",
+        )
+        db.add(failed_gen)
+        db.commit()
+        return error_response(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            message=f"AI CV output failed schema validation: {exc}",
+        )
+
+    cover_letter: Optional[StructuredCoverLetter] = None
+    if cover_letter_raw:
+        try:
+            cover_letter = StructuredCoverLetter.model_validate(cover_letter_raw)
+        except Exception as exc:
+            logger.warning(f"Cover letter schema validation failed: {exc} — continuing without cover letter")
+
+    # ── 6. Persist AiGeneration record ────────────────────────────────────
+    ai_gen = AiGeneration(
+        submission_id=submission_id,
+        model=llm_result["model_used"],
+        input_tokens=llm_result["input_tokens"],
+        output_tokens=llm_result["output_tokens"],
+        cost=llm_result["cost"],
+        status=AiGenerationStatus.SUCCESS.value,
+        structured_cv_json=cv_data.model_dump(),
+        cover_letter_json=cover_letter.model_dump() if cover_letter else None,
+    )
+    db.add(ai_gen)
+    prompt_obj.usage_count = (prompt_obj.usage_count or 0) + 1
+
+    # Update submission status
+    submission.status = SubmissionStatus.REVIEW.value
+    from app.models.activities import SubmissionActivity
+    db.add(SubmissionActivity(
+        submission_id=submission.id,
+        activity_type="status_changed",
+        title="Resume Tailored",
+        description=(
+            f"Resume and cover letter generated using model "
+            f"'{llm_result['model_used']}' by "
+            f"{current_admin.first_name} {current_admin.last_name}"
+        ),
+        actor_id=current_admin.id,
+    ))
+
+    db.flush()  # get ai_gen.id before creating Document records
+
+    # ── 7. Render + upload all 4 files ────────────────────────────────────
+    client_first = (
+        submission.client.first_name.strip()
+        if submission.client and submission.client.first_name
+        else f"document_{submission_id[:8]}"
+    )
+
+    def _next_version(kind: str, fmt: str) -> int:
+        return (
+            db.query(Document)
+            .filter(
+                Document.submission_id == submission_id,
+                Document.file_type == fmt,
+                Document.document_kind == kind,
+            )
+            .count()
+        ) + 1
+
+    def _render_and_upload(
+        kind: str,
+        fmt: str,
+        file_bytes: bytes,
+        version: int,
+    ) -> dict:
+        suffix = "" if kind == "resume" else "_cover_letter"
+        file_name = f"{client_first}{suffix}.{fmt}"
+        public_id = (
+            f"ai_cv_generator/documents/{submission_id}"
+            f"/{kind}_{fmt}_v{version}"
+        )
+        cloud = upload_to_cloudinary(
+            file_bytes=file_bytes,
+            public_id=public_id,
+            resource_type="raw",
+            format=fmt,
+        )
+        doc = Document(
+            submission_id=submission_id,
+            ai_generation_id=ai_gen.id,
+            file_url=cloud["secure_url"],
+            file_name=file_name,
+            public_id=cloud["public_id"],
+            file_type=fmt,
+            document_kind=kind,
+            version=version,
+        )
+        db.add(doc)
+        db.flush()
+        return {
+            "id":            doc.id,
+            "file_name":     doc.file_name,
+            "file_url":      doc.file_url,
+            "file_type":     doc.file_type,
+            "document_kind": doc.document_kind,
+            "version":       doc.version,
+        }
+
+    created_docs = []
+    errors = []
+
+    # Pre-render HTML once each (shared by PDF step)
+    cv_html = render_cv_to_html(cv_data)
+    cl_html = render_cover_letter_to_html(cv_data, cover_letter) if cover_letter else None
+
+    for fmt in ("pdf", "docx"):
+        # ── Resume ────────────────────────────────────────────────────────
+        try:
+            rb = render_pdf_bytes(cv_html) if fmt == "pdf" else render_docx_bytes(cv_data)
+            created_docs.append(
+                _render_and_upload("resume", fmt, rb, _next_version("resume", fmt))
+            )
+        except Exception as exc:
+            logger.error(f"Resume {fmt.upper()} render/upload failed: {exc}")
+            errors.append(f"resume_{fmt}: {exc}")
+
+        # ── Cover letter ──────────────────────────────────────────────────
+        if cover_letter and cl_html:
+            try:
+                cb = (
+                    render_pdf_bytes(cl_html)
+                    if fmt == "pdf"
+                    else render_cover_letter_docx_bytes(cv_data, cover_letter)
+                )
+                created_docs.append(
+                    _render_and_upload(
+                        "cover_letter", fmt, cb,
+                        _next_version("cover_letter", fmt),
+                    )
+                )
+            except Exception as exc:
+                logger.error(f"Cover letter {fmt.upper()} render/upload failed: {exc}")
+                errors.append(f"cover_letter_{fmt}: {exc}")
+
+    db.commit()
+
+    # ── 8. WebSocket broadcast ────────────────────────────────────────────
+    await manager.broadcast_to_submission(submission_id, {
+        "event": "resume_tailored",
+        "data": {
+            "submission_id":    submission_id,
+            "ai_generation_id": ai_gen.id,
+            "model":            ai_gen.model,
+            "documents":        created_docs,
+            "generated_by":     f"{current_admin.first_name} {current_admin.last_name}",
+        },
+    })
+
+    actual_provider = llm_result.get("provider_used", getattr(payload, "provider", "openai"))
+
+    return success_response(
+        status_code=status.HTTP_201_CREATED,
+        message=(
+            f"Resume tailored successfully — "
+            f"{len(created_docs)} file(s) ready for download"
+            + (f". Warnings: {'; '.join(errors)}" if errors else "")
+        ),
+        data={
+            "ai_generation_id": ai_gen.id,
+            "submission_id":    submission_id,
+            "model":            ai_gen.model,
+            "provider_used":    actual_provider,
+            "input_tokens":     ai_gen.input_tokens,
+            "output_tokens":    ai_gen.output_tokens,
+            "cost":             ai_gen.cost,
+            "documents":        created_docs,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# OpenAI model listing — for the frontend dropdown
+# ---------------------------------------------------------------------------
+
+# Chat-capable model ID prefixes we want to surface.
+# Ordered by preference so the frontend dropdown lists best-first.
+_CHAT_MODEL_PREFIXES = (
+    "gpt-4o",
+    "gpt-4-turbo",
+    "gpt-4",
+    "gpt-3.5-turbo",
+)
+
+# Human-readable labels and cost hints shown in the dropdown.
+_MODEL_METADATA: dict[str, dict] = {
+    "gpt-4o":                  {"label": "GPT-4o",             "tier": "recommended", "note": "Best quality — fast"},
+    "gpt-4o-mini":             {"label": "GPT-4o Mini",        "tier": "standard",    "note": "Fast & cost-efficient"},
+    "gpt-4-turbo":             {"label": "GPT-4 Turbo",        "tier": "standard",    "note": "Long-context tasks"},
+    "gpt-4-turbo-preview":     {"label": "GPT-4 Turbo Preview","tier": "standard",    "note": "Preview channel"},
+    "gpt-4":                   {"label": "GPT-4",              "tier": "standard",    "note": "Stable, reliable"},
+    "gpt-3.5-turbo":           {"label": "GPT-3.5 Turbo",      "tier": "budget",      "note": "Fastest — testing only"},
+}
+
+
+async def get_ai_models_service(current_admin) -> dict:
+    """
+    Fetch all chat-capable OpenAI models and return a curated, sorted list
+    for the frontend model-selection dropdown.
+
+    Returns only models whose IDs start with a recognised chat prefix.
+    Each entry includes a human-readable label, a tier badge, and a note
+    so the admin can make an informed selection.
+
+    Falls back gracefully if the OpenAI API is unreachable or the key is
+    missing — returns the hardcoded curated list so the UI is never broken.
+    """
+    openai_key = settings.OPENAI_API_KEY
+
+    curated_fallback = [
+        {
+            "id":    model_id,
+            "label": meta["label"],
+            "tier":  meta["tier"],
+            "note":  meta["note"],
+        }
+        for model_id, meta in _MODEL_METADATA.items()
+    ]
+
+    if not openai_key:
+        logger.warning("OPENAI_API_KEY not configured — returning curated model list")
+        return success_response(
+            status_code=200,
+            message="Model list returned from curated defaults (no API key configured)",
+            data={"models": curated_fallback, "source": "curated"},
+        )
+
+    url = "https://api.openai.com/v1/models"
+    headers = {"Authorization": f"Bearer {openai_key}"}
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url, headers=headers)
+
+        if resp.status_code != 200:
+            logger.warning(f"OpenAI /v1/models returned {resp.status_code} — using curated fallback")
+            return success_response(
+                status_code=200,
+                message="Model list returned from curated defaults",
+                data={"models": curated_fallback, "source": "curated"},
+            )
+
+        all_models = resp.json().get("data", [])
+
+    except Exception as exc:
+        logger.warning(f"OpenAI /v1/models call failed: {exc} — using curated fallback")
+        return success_response(
+            status_code=200,
+            message="Model list returned from curated defaults",
+            data={"models": curated_fallback, "source": "curated"},
+        )
+
+    # ── Filter to chat-capable models only ───────────────────────────────
+    def _prefix_rank(model_id: str) -> int:
+        """Lower rank = higher priority in the dropdown."""
+        for i, prefix in enumerate(_CHAT_MODEL_PREFIXES):
+            if model_id.startswith(prefix):
+                return i
+        return len(_CHAT_MODEL_PREFIXES)
+
+    chat_models = [
+        m for m in all_models
+        if any(m["id"].startswith(p) for p in _CHAT_MODEL_PREFIXES)
+        # Exclude fine-tuned, instruct, vision-only, and legacy variants
+        and not any(tag in m["id"] for tag in (
+            "instruct", "vision", "ft:", "davinci", "babbage",
+            "curie", "ada", "whisper", "tts", "dall-e", "embed",
+        ))
+    ]
+
+    # Sort: by prefix rank first, then alphabetically within the same prefix
+    chat_models.sort(key=lambda m: (_prefix_rank(m["id"]), m["id"]))
+
+    # ── Enrich with metadata ──────────────────────────────────────────────
+    enriched = []
+    for m in chat_models:
+        mid = m["id"]
+        meta = _MODEL_METADATA.get(mid, {})
+        enriched.append({
+            "id":    mid,
+            "label": meta.get("label", mid),
+            "tier":  meta.get("tier", "standard"),
+            "note":  meta.get("note", ""),
+        })
+
+    return success_response(
+        status_code=200,
+        message=f"{len(enriched)} chat model(s) available",
+        data={"models": enriched, "source": "openai_api"},
     )

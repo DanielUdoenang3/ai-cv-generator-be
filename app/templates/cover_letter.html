@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>{{ cv.personal_info.full_name }} — Cover Letter</title>
+  <style>
+    /* ── Page setup ──────────────────────────────────────────────────────── */
+    @page {
+      size: letter;
+      margin: 0.6in;
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: "Times New Roman", Times, serif;
+      font-size: 11pt;
+      line-height: 1.15;
+      color: #000000;
+      background: #ffffff;
+      hyphens: none;
+      word-wrap: break-word;
+    }
+
+    /* ── Header — identical to resume ───────────────────────────────────── */
+    .header {
+      text-align: center;
+      margin-bottom: 20pt;
+    }
+
+    .header .full-name {
+      font-size: 16pt;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+      line-height: 1.1;
+    }
+
+    .header .contact-line {
+      font-size: 11pt;
+      margin-top: 2pt;
+    }
+
+    /* ── Letter body ─────────────────────────────────────────────────────── */
+    .date-line {
+      margin-bottom: 18pt;
+      font-size: 11pt;
+    }
+
+    .salutation {
+      margin-bottom: 12pt;
+      font-size: 11pt;
+    }
+
+    .body-paragraph {
+      font-size: 11pt;
+      line-height: 1.4;
+      text-align: justify;
+      margin-bottom: 12pt;
+    }
+
+    .sign-off {
+      margin-top: 18pt;
+      margin-bottom: 4pt;
+      font-size: 11pt;
+    }
+
+    .signatory {
+      font-size: 11pt;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ══════════ HEADER ══════════ -->
+  <div class="header">
+    <div class="full-name">{{ cv.personal_info.full_name }}</div>
+    <div class="contact-line">
+      {%- set parts = [] -%}
+      {%- if cv.personal_info.location  -%}{%- set _ = parts.append(cv.personal_info.location)  -%}{%- endif -%}
+      {%- if cv.personal_info.phone     -%}{%- set _ = parts.append(cv.personal_info.phone)     -%}{%- endif -%}
+      {%- if cv.personal_info.email     -%}{%- set _ = parts.append(cv.personal_info.email)     -%}{%- endif -%}
+      {%- if cv.personal_info.linkedin  -%}{%- set _ = parts.append(cv.personal_info.linkedin)  -%}{%- endif -%}
+      {%- if cv.personal_info.portfolio -%}{%- set _ = parts.append(cv.personal_info.portfolio) -%}{%- endif -%}
+      {{ parts | join(" | ") }}
+    </div>
+  </div>
+
+  <!-- ══════════ DATE ══════════ -->
+  {% if letter.date %}
+  <div class="date-line">{{ letter.date }}</div>
+  {% endif %}
+
+  <!-- ══════════ SALUTATION ══════════ -->
+  <div class="salutation">{{ letter.salutation or "Dear Hiring Manager," }}</div>
+
+  <!-- ══════════ BODY ══════════ -->
+  {% for paragraph in letter.body_paragraphs %}
+  <p class="body-paragraph">{{ paragraph }}</p>
+  {% endfor %}
+
+  <!-- ══════════ SIGN-OFF ══════════ -->
+  <div class="sign-off">{{ letter.sign_off or "Warm regards," }}</div>
+  <div class="signatory">
+    {{ letter.signatory_name or cv.personal_info.full_name }}
+  </div>
+
+</body>
+</html>

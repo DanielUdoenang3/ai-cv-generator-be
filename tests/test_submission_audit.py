@@ -70,7 +70,7 @@ def test_submission_reference_id_and_activity_audit(client):
     assert len(activities) == 1
     assert activities[0]["activity_type"] == "submission_created"
     assert activities[0]["title"] == "Submission Created"
-    assert activities[0]["description"] == "Client submitted CV request through the form"
+    assert activities[0]["description"] == "Client submitted intake form"
 
     # 4. Create second submission to verify sequential reference ID increment
     sub2_id, token2 = _create_submission(

@@ -1,93 +1,124 @@
-from typing import Optional, List
+"""
+services/admin/dashboard.py
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Dashboard data service.
+
+Super-admin  → full stats (new / in-progress / completed / active chats)
+              + recent-submissions list with all filters.
+
+Sub-admin    → clean assigned-client list only.
+              No status counters, no unrelated clutter.
+"""
+
+from __future__ import annotations
+
+from typing import Optional
+
 from fastapi import status
-from sqlalchemy.orm import Session
 from sqlalchemy import or_
+from sqlalchemy.orm import Session
 
 from app.models.admins import Admin
-from app.models.submissions import Submission
 from app.models.chats import Conversation, Message
 from app.models.clients import Client
 from app.models.enums import AdminRole
-from app.utils.custom_response import success_response, error_response
+from app.models.submissions import Submission
+from app.utils.custom_response import success_response
 
 
-def _serialize_recent_submission(submission: Submission) -> dict:
-    """Internal helper to serialize submission object for dashboard table."""
-    client = submission.client
+# ─────────────────────────────────────────────────────────────────────────────
+# Serialiser
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _serialize_submission(submission: Submission) -> dict:
+    """Compact submission dict for dashboard list views."""
+    client      = submission.client
     assigned_to = submission.assigned_to
     return {
-        "id": submission.id,
-        "reference_id": submission.reference_id,
+        "id":             submission.id,
+        "reference_id":   submission.reference_id,
         "target_position": submission.target_position,
-        "target_company": submission.target_company,
-        "priority": submission.priority,
-        "status": submission.status,
-        "created_at": submission.created_at,
-        "updated_at": submission.updated_at,
+        "target_company":  submission.target_company,
+        "priority":        submission.priority,
+        "status":          submission.status,
+        "created_at":      submission.created_at,
+        "updated_at":      submission.updated_at,
         "client": {
-            "id": client.id,
+            "id":         client.id,
             "first_name": client.first_name,
-            "last_name": client.last_name,
-            "email": client.email,
-            "phone": client.phone,
+            "last_name":  client.last_name,
+            "email":      client.email,
+            "phone":      client.phone,
+            "city":       client.city,
+            "state":      client.state,
+            "country":    client.country,
+            "linkedin_url":         client.linkedin_url,
+            "desired_job_titles":   client.desired_job_titles,
+            "preferred_work_arrangement": client.preferred_work_arrangement,
+            "resume_file_url":      client.resume_file_url,
         } if client else None,
         "assigned_to": {
-            "id": assigned_to.id,
+            "id":         assigned_to.id,
             "first_name": assigned_to.first_name,
-            "last_name": assigned_to.last_name,
-            "role": assigned_to.role,
+            "last_name":  assigned_to.last_name,
+            "role":       assigned_to.role,
         } if assigned_to else None,
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Stats  (super-admin only)
+# ─────────────────────────────────────────────────────────────────────────────
+
 async def get_dashboard_stats(current_admin: Admin, db: Session):
     """
-    Computes dashboard analytics counts:
-    - new_requests
-    - in_progress
-    - completed
-    - active_chats (linked to active submissions, with >=1 message)
-    
-    If the caller is a Sub-Admin, counts are scoped to their assigned submissions.
+    Returns overview metric counts for the super-admin dashboard cards.
+    Sub-admins receive an empty stats block — they have no stats dashboard.
     """
     is_super = current_admin.role == AdminRole.SUPER_ADMIN.value
 
-    # Base queries
-    new_query = db.query(Submission).filter(Submission.status == "new")
-    in_progress_query = db.query(Submission).filter(Submission.status == "in_progress")
-    completed_query = db.query(Submission).filter(Submission.status == "completed")
+    if not is_super:
+        # Sub-admins do not have a stats dashboard; return a clean empty object
+        # so the frontend can safely destructure without guarding every field.
+        return success_response(
+            status_code=status.HTTP_200_OK,
+            message="Dashboard stats not available for this role",
+            data={},
+        )
 
-    active_chats_query = (
+    new_count = (
+        db.query(Submission).filter(Submission.status == "new").count()
+    )
+    in_progress_count = (
+        db.query(Submission).filter(Submission.status == "in_progress").count()
+    )
+    completed_count = (
+        db.query(Submission).filter(Submission.status == "completed").count()
+    )
+    active_chats_count = (
         db.query(Conversation)
         .join(Submission, Conversation.submission_id == Submission.id)
-        .join(Message, Message.conversation_id == Conversation.id)
+        .join(Message,    Message.conversation_id   == Conversation.id)
         .filter(Submission.status.notin_(["completed", "rejected"]))
         .distinct()
+        .count()
     )
-
-    # Scoping for sub-admins
-    if not is_super:
-        new_query = new_query.filter(Submission.assigned_to_id == current_admin.id)
-        in_progress_query = in_progress_query.filter(Submission.assigned_to_id == current_admin.id)
-        completed_query = completed_query.filter(Submission.assigned_to_id == current_admin.id)
-        active_chats_query = active_chats_query.filter(Submission.assigned_to_id == current_admin.id)
-
-    new_count = new_query.count()
-    in_progress_count = in_progress_query.count()
-    completed_count = completed_query.count()
-    active_chats_count = active_chats_query.count()
 
     return success_response(
         status_code=status.HTTP_200_OK,
         message="Dashboard stats fetched successfully",
         data={
             "new_requests": new_count,
-            "in_progress": in_progress_count,
-            "completed": completed_count,
+            "in_progress":  in_progress_count,
+            "completed":    completed_count,
             "active_chats": active_chats_count,
-        }
+        },
     )
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Assigned-client list  (both roles — scoped by RBAC)
+# ─────────────────────────────────────────────────────────────────────────────
 
 async def get_recent_submissions(
     current_admin: Admin,
@@ -101,73 +132,71 @@ async def get_recent_submissions(
     sort_order: str = "desc",
 ):
     """
-    Returns a paginated, filterable, and sortable list of submissions.
-    Supports search query matching client details & target position.
-    Respects RBAC (Sub-admins only see their assigned submissions).
+    Paginated, filterable submission list.
+
+    Super-admin  → sees all submissions; can filter by assigned_to_id.
+    Sub-admin    → sees only submissions assigned to them; all other filters
+                   still work but are silently scoped to their own records.
     """
     is_super = current_admin.role == AdminRole.SUPER_ADMIN.value
 
-    # Base query joining client
     query = db.query(Submission).outerjoin(Client, Submission.client_id == Client.id)
 
-    # Enforce RBAC
+    # ── RBAC scoping ──────────────────────────────────────────────────────
     if not is_super:
         query = query.filter(Submission.assigned_to_id == current_admin.id)
     else:
-        # Super admin filters by assigned staff member if provided
         if assigned_to_id:
             if assigned_to_id.lower() == "unassigned":
                 query = query.filter(Submission.assigned_to_id.is_(None))
             else:
                 query = query.filter(Submission.assigned_to_id == assigned_to_id)
 
-    # Filter: search term (matches client details, target position, target company, or reference ID)
+    # ── Search ────────────────────────────────────────────────────────────
     if search:
-        search_pattern = f"%{search}%"
+        pat = f"%{search}%"
         query = query.filter(
             or_(
-                Client.first_name.ilike(search_pattern),
-                Client.last_name.ilike(search_pattern),
-                Client.email.ilike(search_pattern),
-                Submission.target_position.ilike(search_pattern),
-                Submission.target_company.ilike(search_pattern),
-                Submission.reference_id.ilike(search_pattern),
+                Client.first_name.ilike(pat),
+                Client.last_name.ilike(pat),
+                Client.email.ilike(pat),
+                Submission.target_position.ilike(pat),
+                Submission.target_company.ilike(pat),
+                Submission.reference_id.ilike(pat),
             )
         )
 
-    # Filter: status
+    # ── Status filter ─────────────────────────────────────────────────────
     if status_filter:
         query = query.filter(Submission.status == status_filter)
 
-    # Sort
-    valid_sort_fields = {
-        "created_at": Submission.created_at,
-        "updated_at": Submission.updated_at,
-        "status": Submission.status,
+    # ── Sort ──────────────────────────────────────────────────────────────
+    _sort_map = {
+        "created_at":    Submission.created_at,
+        "updated_at":    Submission.updated_at,
+        "status":        Submission.status,
         "target_position": Submission.target_position,
+        "reference_id":  Submission.reference_id,
+        "priority":      Submission.priority,
     }
-    sort_column = valid_sort_fields.get(sort_by, Submission.created_at)
+    col = _sort_map.get(sort_by, Submission.created_at)
+    query = query.order_by(col.asc() if sort_order.lower() == "asc" else col.desc())
 
-    if sort_order.lower() == "asc":
-        query = query.order_by(sort_column.asc())
-    else:
-        query = query.order_by(sort_column.desc())
-
-    # Pagination calculations
-    total = query.count()
-    pages = (total + limit - 1) // limit if total > 0 else 0
+    # ── Pagination ────────────────────────────────────────────────────────
+    total  = query.count()
+    pages  = (total + limit - 1) // limit if total else 0
     offset = (page - 1) * limit
 
     submissions = query.offset(offset).limit(limit).all()
 
     return success_response(
         status_code=status.HTTP_200_OK,
-        message="Recent submissions fetched successfully",
+        message="Submissions fetched successfully",
         data={
-            "total": total,
-            "page": page,
-            "limit": limit,
-            "pages": pages,
-            "submissions": [_serialize_recent_submission(s) for s in submissions]
-        }
+            "total":       total,
+            "page":        page,
+            "limit":       limit,
+            "pages":       pages,
+            "submissions": [_serialize_submission(s) for s in submissions],
+        },
     )

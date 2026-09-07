@@ -2,10 +2,12 @@ from fastapi import status
 from app.models.admins import Admin
 from app.utils.custom_response import success_response, error_response
 from sqlalchemy.orm import Session
-from app.schema.auth import AdminLogin, CreateAdmin, AdminProfileUpdate
-from app.utils.token import decode_access_token, create_access_token, create_refresh_token
+from app.schema.auth import AdminLogin, CreateAdmin, AdminProfileUpdate, ForgotPasswordRequest, ResetPasswordRequest
+from app.utils.token import decode_access_token, create_access_token, create_refresh_token, create_reset_token, decode_reset_token
 from app.utils.settings import settings
 from app.utils.pass_hash import verify_password, hash_password
+from app.models.enums import AdminRole
+from app.services.email_services import send_reset_password_email
 from datetime import datetime, timezone
 
 
@@ -197,4 +199,133 @@ async def update_admin_profile(current_admin: Admin, data: AdminProfileUpdate, d
         status_code=status.HTTP_200_OK,
         message="Profile updated successfully",
         data=res_data
+    )
+
+
+async def forgot_password(data: ForgotPasswordRequest, db: Session):
+    """
+    Step 1 of magic-link flow.
+    Looks up the email, confirms it belongs to a super_admin or sub_admin,
+    generates a short-lived reset token, persists it, and dispatches the email.
+
+    We always return a generic 200 so we don't leak whether the email exists.
+    """
+    email_lower = data.email.lower().strip()
+
+    admin = db.query(Admin).filter(
+        Admin.email == email_lower,
+        Admin.is_active == True,
+        Admin.role.in_([AdminRole.SUPER_ADMIN.value, AdminRole.SUB_ADMIN.value]),
+    ).first()
+
+    # Generic response regardless of outcome — prevents email enumeration
+    generic_message = "If that email is registered, a reset link has been sent."
+
+    if not admin:
+        return success_response(
+            status_code=status.HTTP_200_OK,
+            message=generic_message,
+        )
+
+    # Generate token and persist it
+    token, expires_at = create_reset_token(email_lower)
+    admin.reset_token = token
+    admin.reset_token_expires_at = expires_at
+    db.commit()
+    db.refresh(admin)
+
+    # Build the magic link pointing at the frontend reset page
+    reset_link = f"{settings.DASHBOARD}/reset-password?token={token}"
+
+    # Fire the email (non-blocking failure — we still return 200)
+    await send_reset_password_email(
+        to_email=admin.email,
+        first_name=admin.first_name,
+        role=admin.role,
+        reset_link=reset_link,
+        expires_at=expires_at,
+    )
+
+    return success_response(
+        status_code=status.HTTP_200_OK,
+        message=generic_message,
+    )
+
+
+async def reset_password(data: ResetPasswordRequest, db: Session):
+    """
+    Step 2 of magic-link flow.
+    Validates the token, enforces expiry, updates the password,
+    clears the token, and issues a fresh access token so the frontend
+    can log the user straight into their dashboard.
+    """
+    email = decode_reset_token(data.token)
+
+    if not email:
+        return error_response(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            message="This reset link is invalid or has expired. Please request a new one.",
+        )
+
+    admin = db.query(Admin).filter(
+        Admin.email == email,
+        Admin.is_active == True,
+        Admin.role.in_([AdminRole.SUPER_ADMIN.value, AdminRole.SUB_ADMIN.value]),
+    ).first()
+
+    if not admin:
+        return error_response(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            message="This reset link is invalid or has expired. Please request a new one.",
+        )
+
+    # Double-check token matches what is stored (guards against token reuse after invalidation)
+    if admin.reset_token != data.token:
+        return error_response(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            message="This reset link has already been used. Please request a new one.",
+        )
+
+    # Double-check expiry at the DB level (belt-and-suspenders over JWT exp).
+    # Postgres may return a naive datetime; normalise both sides to UTC before comparing.
+    if admin.reset_token_expires_at is None:
+        return error_response(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            message="This reset link has expired. Please request a new one.",
+        )
+
+    stored_expiry = admin.reset_token_expires_at
+    if stored_expiry.tzinfo is None:
+        # Treat naive datetime from DB as UTC
+        stored_expiry = stored_expiry.replace(tzinfo=timezone.utc)
+
+    if datetime.now(timezone.utc) > stored_expiry:
+        return error_response(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            message="This reset link has expired. Please request a new one.",
+        )
+
+    # Hash and save the new password, then invalidate the token immediately
+    admin.password = hash_password(data.new_password)
+    admin.reset_token = None
+    admin.reset_token_expires_at = None
+    admin.last_login = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(admin)
+
+    # Issue a fresh access token so the frontend can redirect straight to the dashboard
+    access_token = create_access_token(data={"email": admin.email})
+
+    return success_response(
+        status_code=status.HTTP_200_OK,
+        message="Password reset successfully. Welcome back!",
+        data={
+            "id": admin.id,
+            "first_name": admin.first_name,
+            "last_name": admin.last_name,
+            "email": admin.email,
+            "role": admin.role,
+            "is_active": admin.is_active,
+            "access_token": access_token,
+        },
     )

@@ -31,8 +31,9 @@ class StructuredCvEducation(BaseModel):
     degree: str
     institution: str
     location: Optional[str] = None
-    graduation_year: Optional[str] = None
-    honors: Optional[str] = None
+    start_date: Optional[str] = None       # e.g. "Jan 2018"
+    graduation_year: Optional[str] = None  # e.g. "May 2022"
+    honors: Optional[str] = None           # GPA or distinction
 
 
 class StructuredCvProject(BaseModel):
@@ -73,6 +74,12 @@ class StructuredCvData(BaseModel):
     professional_summary: str
     work_experience: List[StructuredCvExperience] = Field(default_factory=list)
     skills: Dict[str, List[str]] = Field(default_factory=dict)
+    # Flat paragraph of comma-separated tools — maps to the
+    # "TECHNICAL & INDUSTRY TOOLS" section in the Ayobami PDF template.
+    technical_tools: Optional[str] = Field(
+        None,
+        description="Comma-separated technical tools string e.g. 'SQL, Python, Salesforce, Jira, ...'",
+    )
     education: List[StructuredCvEducation] = Field(default_factory=list)
     projects: List[StructuredCvProject] = Field(default_factory=list)
     certifications: List[StructuredCvCertification] = Field(default_factory=list)
@@ -171,6 +178,74 @@ class PromptStatsResponse(BaseModel):
     total_usage: int
 
 
+class TailorResumeRequest(BaseModel):
+    """
+    Request body for the unified POST /submissions/{id}/tailor endpoint.
+
+    The sub-admin selects an optional prompt template, adds the job description
+    (already stored on the submission, but can be overridden here), any
+    additional instructions, and hits send.  The service generates both the
+    resume and cover letter in one call and returns 4 download links.
+    """
+    prompt_id: Optional[str] = Field(
+        None,
+        description="Prompt template ID. If omitted, smart role-matching selects the best active prompt.",
+    )
+    provider: str = Field("openai", description="LLM provider: 'openai' or 'gemini'")
+    model: Optional[str] = Field(
+        None,
+        description="Specific model name e.g. 'gpt-4o', 'gpt-4o-mini', 'gemini-1.5-flash'",
+    )
+    custom_instructions: Optional[str] = Field(
+        None,
+        description="Additional instructions for the AI e.g. 'Emphasize the 45% merchant activation metric'",
+    )
+    include_chat_history: bool = Field(
+        True,
+        description="Whether to include the client-admin chat transcript in the AI context",
+    )
+
+
+# ---------------------------------------------------------------------------
+# COVER LETTER SCHEMA (LLM output + rendering)
+# ---------------------------------------------------------------------------
+
+class StructuredCoverLetter(BaseModel):
+    """
+    Structured cover letter produced by the AI alongside the resume.
+
+    The LLM returns this as a sibling key to ``structured_cv`` so both
+    documents can be rendered from a single generation call.
+    """
+
+    # Date shown at the top of the letter e.g. "August 31, 2026"
+    date: Optional[str] = Field(None, description="Date line e.g. 'August 31, 2026'")
+
+    # Salutation line — defaults to 'Dear Hiring Manager,' if omitted
+    salutation: Optional[str] = Field(
+        "Dear Hiring Manager,",
+        description="Opening salutation",
+    )
+
+    # Body paragraphs — each element is one paragraph of plain prose
+    body_paragraphs: List[str] = Field(
+        default_factory=list,
+        description="List of body paragraphs in order",
+    )
+
+    # Sign-off line e.g. "Warm regards,"
+    sign_off: Optional[str] = Field("Warm regards,", description="Closing line")
+
+    # Candidate's name as it appears under the sign-off
+    # Falls back to personal_info.full_name from the CV if omitted
+    signatory_name: Optional[str] = Field(
+        None,
+        description="Full name (and credentials) beneath the sign-off e.g. 'Ayobami Adegbite, PhD'",
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 # ---------------------------------------------------------------------------
 # DOCUMENT RENDERING SCHEMAS
 # ---------------------------------------------------------------------------
@@ -180,6 +255,10 @@ class DocumentRenderRequest(BaseModel):
     formats: List[str] = Field(
         default=["pdf", "docx"],
         description="List of output formats to render. Supported: 'pdf', 'docx'",
+    )
+    document_kind: str = Field(
+        default="resume",
+        description="Which document to render: 'resume' or 'cover_letter'",
     )
 
 
@@ -191,6 +270,7 @@ class DocumentResponse(BaseModel):
     file_url: str
     public_id: Optional[str] = None
     file_type: str
+    document_kind: str = "resume"
     version: int
     created_at: datetime
 

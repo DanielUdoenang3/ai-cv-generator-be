@@ -11,8 +11,13 @@ class Document(BaseModel):
     ai_generation_id = Column(String, ForeignKey("ai_generations.id", ondelete="SET NULL"), nullable=True)
     file_url = Column(String, nullable=False)
     file_name = Column(String, nullable=True)
-    public_id = Column(String, nullable=True)  # Cloudinary public_id for management
+    public_id = Column(String, nullable=True)          # Cloudinary public_id for management
     file_type = Column(String, default=DocumentType.PDF.value, nullable=False)
+
+    # Distinguishes resume documents from cover letter documents.
+    # Values: 'resume' | 'cover_letter'
+    document_kind = Column(String, default="resume", nullable=False)
+
     version = Column(Integer, default=1, nullable=False)
 
     # Relationships
@@ -20,4 +25,7 @@ class Document(BaseModel):
     ai_generation = relationship("AiGeneration", backref="documents")
 
     def __repr__(self):
-        return f"Document(id={self.id}, submission_id={self.submission_id}, file_type={self.file_type}, version={self.version})"
+        return (
+            f"Document(id={self.id}, submission_id={self.submission_id}, "
+            f"file_type={self.file_type}, document_kind={self.document_kind}, version={self.version})"
+        )

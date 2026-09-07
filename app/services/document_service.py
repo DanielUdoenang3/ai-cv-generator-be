@@ -1,5 +1,29 @@
+"""
+document_service.py
+~~~~~~~~~~~~~~~~~~~
+Rendering pipeline for resumes and cover letters.
+
+Supported output formats: PDF (via WeasyPrint) and DOCX (via python-docx).
+Both renderers target the exact single-column LaTeX-style layout specified
+by the client (Times New Roman 11pt, 0.6 in margins, bold-centered name,
+pipe-separated contact line, ALL-CAPS bold section headings with rule).
+
+Public surface
+--------------
+render_cv_to_html()             → HTML string from StructuredCvData
+render_cover_letter_to_html()   → HTML string from StructuredCvData + StructuredCoverLetter
+render_pdf_bytes()              → PDF bytes from an HTML string
+render_docx_bytes()             → DOCX bytes for a resume
+render_cover_letter_docx_bytes()→ DOCX bytes for a cover letter
+upload_to_cloudinary()          → upload helper
+render_cv_documents_service()   → orchestration endpoint (admin-triggered)
+"""
+
+from __future__ import annotations
+
 import io
 import logging
+import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -15,23 +39,20 @@ from app.models.ai_generations import AiGeneration
 from app.models.documents import Document
 from app.models.enums import AdminRole, DocumentType
 from app.models.submissions import Submission
-from app.schema.ai import StructuredCvData
+from app.schema.ai import StructuredCoverLetter, StructuredCvData
 from app.utils.custom_response import error_response, success_response
 from app.utils.settings import settings
 
 logger = logging.getLogger(__name__)
 
-# ── Configure Cloudinary ────────────────────────────────────────────────────
-# Initialise here so document_service is self-contained regardless of import order.
+# ── Cloudinary ──────────────────────────────────────────────────────────────
 cloudinary.config(
     cloud_name=settings.CLOUDINARY_CLOUD_NAME,
     api_key=settings.CLOUDINARY_API_KEY,
     api_secret=settings.CLOUDINARY_API_SECRET,
 )
 
-logger = logging.getLogger(__name__)
-
-# ── Template engine setup ───────────────────────────────────────────────────
+# ── Jinja2 template engine ──────────────────────────────────────────────────
 TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 
 _jinja_env = Environment(
@@ -40,275 +61,474 @@ _jinja_env = Environment(
 )
 
 
-# ── HTML Rendering ──────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════
+# HTML rendering
+# ═══════════════════════════════════════════════════════════════════════════
 
 def render_cv_to_html(cv_data: StructuredCvData, template_name: Optional[str] = None) -> str:
-    """
-    Render StructuredCvData → HTML string using a Jinja2 template.
-    Falls back to 'cv_default.html' if no custom template is provided or found.
-    """
+    """Render StructuredCvData → HTML using the single-column resume template."""
     chosen = template_name or "cv_default.html"
-
-    # Graceful fallback: if a custom template name is given but doesn't exist, use default
     try:
         template = _jinja_env.get_template(chosen)
     except Exception:
         logger.warning(f"Template '{chosen}' not found — falling back to cv_default.html")
         template = _jinja_env.get_template("cv_default.html")
-
     return template.render(cv=cv_data)
 
 
-# ── PDF Rendering ───────────────────────────────────────────────────────────
+def render_cover_letter_to_html(
+    cv_data: StructuredCvData,
+    letter: StructuredCoverLetter,
+) -> str:
+    """Render cover letter HTML (header from cv_data, body from letter)."""
+    template = _jinja_env.get_template("cover_letter.html")
+    return template.render(cv=cv_data, letter=letter)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PDF rendering
+# ═══════════════════════════════════════════════════════════════════════════
 
 def render_pdf_bytes(html: str) -> bytes:
-    """Convert an HTML string into PDF bytes using WeasyPrint."""
+    """Convert an HTML string to PDF bytes using WeasyPrint."""
     try:
         from weasyprint import HTML as WeasyprintHTML
-        pdf_bytes = WeasyprintHTML(string=html).write_pdf()
-        return pdf_bytes
-    except Exception as e:
-        logger.error(f"WeasyPrint PDF rendering failed: {e}")
-        raise RuntimeError(f"PDF rendering failed: {e}")
+        return WeasyprintHTML(string=html).write_pdf()
+    except Exception as exc:
+        logger.error(f"WeasyPrint PDF rendering failed: {exc}")
+        raise RuntimeError(f"PDF rendering failed: {exc}") from exc
 
 
-# ── DOCX Rendering ──────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════
+# DOCX rendering — resume
+# ═══════════════════════════════════════════════════════════════════════════
 
 def render_docx_bytes(cv_data: StructuredCvData) -> bytes:
     """
-    Build a polished DOCX document programmatically from StructuredCvData.
-    Uses python-docx for full structural control.
+    Build a DOCX resume that matches the LaTeX-style single-column layout:
+
+    - Letter page, 0.6 in margins all sides
+    - Name: Times New Roman 16 pt, bold, centered, ALL-CAPS
+    - Contact: 11 pt, centered, pipe-separated
+    - Section headings: 11 pt, bold, ALL-CAPS, bottom border rule
+    - Experience: company+location bold left / dates right; role italic left
+    - Bullet points: indented 0.25 in, 11 pt, tight spacing
+    - Skills: bold label + colon + comma-separated values
+    - Certifications: bullet list
+    - Education: pipe-separated inline lines
     """
     try:
         from docx import Document as DocxDocument
-        from docx.shared import Pt, RGBColor, Inches, Cm
         from docx.enum.text import WD_ALIGN_PARAGRAPH
-        from docx.oxml.ns import qn
         from docx.oxml import OxmlElement
-    except ImportError as e:
-        raise RuntimeError(f"python-docx is not installed: {e}")
+        from docx.oxml.ns import qn
+        from docx.shared import Cm, Inches, Pt, RGBColor
+    except ImportError as exc:
+        raise RuntimeError(f"python-docx is not installed: {exc}") from exc
 
     doc = DocxDocument()
 
-    # ── Page margins ───────────────────────────────────────────────────────
+    # ── Page geometry: letter, 0.6 in margins ─────────────────────────────
     for section in doc.sections:
-        section.top_margin = Cm(1.8)
-        section.bottom_margin = Cm(1.8)
-        section.left_margin = Cm(2.0)
-        section.right_margin = Cm(2.0)
+        section.page_width  = int(8.5  * 914400)   # 8.5 in in EMU
+        section.page_height = int(11.0 * 914400)   # 11  in in EMU
+        section.top_margin    = int(0.6 * 914400)
+        section.bottom_margin = int(0.6 * 914400)
+        section.left_margin   = int(0.6 * 914400)
+        section.right_margin  = int(0.6 * 914400)
 
-    # ── Helper functions ───────────────────────────────────────────────────
-    def add_heading(text: str, level: int = 1):
-        p = doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-        run = p.add_run(text.upper())
-        run.bold = True
-        if level == 1:
-            run.font.size = Pt(22)
-            run.font.color.rgb = RGBColor(0x0F, 0x17, 0x2A)
-        elif level == 2:
-            run.font.size = Pt(10)
-            run.font.color.rgb = RGBColor(0x0F, 0x17, 0x2A)
-            run.font.letter_spacing = Pt(1.5)
-            # Underline paragraph bottom border
-            pPr = p._p.get_or_add_pPr()
-            pBdr = OxmlElement('w:pBdr')
-            bottom = OxmlElement('w:bottom')
-            bottom.set(qn('w:val'), 'single')
-            bottom.set(qn('w:sz'), '4')
-            bottom.set(qn('w:space'), '1')
-            bottom.set(qn('w:color'), 'E2E8F0')
-            pBdr.append(bottom)
-            pPr.append(pBdr)
+    # ── Remove default paragraph spacing from Normal style ─────────────────
+    normal_style = doc.styles["Normal"]
+    normal_style.paragraph_format.space_before = Pt(0)
+    normal_style.paragraph_format.space_after  = Pt(0)
+    normal_style.font.name = "Times New Roman"
+    normal_style.font.size = Pt(11)
+
+    # ── Helper: set font on every run in a paragraph ───────────────────────
+    def _apply_font(paragraph, size_pt: float, bold=False, italic=False,
+                    color: Optional[tuple] = None, align=None):
+        if align is not None:
+            paragraph.alignment = align
+        for run in paragraph.runs:
+            run.font.name  = "Times New Roman"
+            run.font.size  = Pt(size_pt)
+            run.bold       = bold
+            run.italic     = italic
+            if color:
+                run.font.color.rgb = RGBColor(*color)
+
+    # ── Helper: paragraph with no extra spacing ────────────────────────────
+    def _para(text: str = "", style: str = "Normal") -> object:
+        p = doc.add_paragraph(text, style=style)
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after  = Pt(0)
         return p
 
-    def add_two_col(left_text: str, right_text: str, left_bold: bool = False):
-        """Add a paragraph with text aligned left and right (tab stop trick)."""
-        p = doc.add_paragraph()
-        p.paragraph_format.space_before = Pt(0)
-        p.paragraph_format.space_after = Pt(1)
-        run_l = p.add_run(left_text)
-        run_l.bold = left_bold
-        run_l.font.size = Pt(10)
-        run_l.font.color.rgb = RGBColor(0x0F, 0x17, 0x2A)
-        p.add_run("\t")
-        run_r = p.add_run(right_text)
-        run_r.font.size = Pt(9)
-        run_r.font.color.rgb = RGBColor(0x64, 0x74, 0x8B)
-        # Right-align the tab stop
-        pPr = p._p.get_or_add_pPr()
-        tabs = OxmlElement('w:tabs')
-        tab = OxmlElement('w:tab')
-        tab.set(qn('w:val'), 'right')
-        tab.set(qn('w:pos'), '9360')  # 6.5 inches in twips
-        tabs.append(tab)
-        pPr.append(tabs)
-        return p
+    # ── Helper: add a bottom-border rule to a paragraph (section heading) ──
+    def _add_bottom_border(paragraph):
+        pPr = paragraph._p.get_or_add_pPr()
+        pBdr = OxmlElement("w:pBdr")
+        bottom = OxmlElement("w:bottom")
+        bottom.set(qn("w:val"),   "single")
+        bottom.set(qn("w:sz"),    "6")       # 0.75 pt
+        bottom.set(qn("w:space"), "1")
+        bottom.set(qn("w:color"), "000000")
+        pBdr.append(bottom)
+        pPr.append(pBdr)
 
-    def add_sub(text: str, color: tuple = (0x25, 0x63, 0xEB)):
-        p = doc.add_paragraph()
-        p.paragraph_format.space_before = Pt(0)
-        p.paragraph_format.space_after = Pt(1)
-        run = p.add_run(text)
-        run.font.size = Pt(9.5)
-        run.font.color.rgb = RGBColor(*color)
-        run.bold = True
-        return p
+    # ── Helper: right-aligned tab stop at right margin ─────────────────────
+    _RIGHT_TWIPS = "8640"   # 6 in at 0.6 in margins on 8.5 in page = 7.3 in usable
+                            # 7.3 in × 1440 twips/in ≈ 10512; use 8640 (6 in) for safety
 
-    def add_body(text: str):
-        p = doc.add_paragraph(text)
-        p.paragraph_format.space_before = Pt(0)
-        p.paragraph_format.space_after = Pt(2)
-        for run in p.runs:
-            run.font.size = Pt(9.5)
-            run.font.color.rgb = RGBColor(0x37, 0x41, 0x51)
-        return p
+    def _add_right_tab(paragraph):
+        pPr = paragraph._p.get_or_add_pPr()
+        tabs_el = OxmlElement("w:tabs")
+        tab = OxmlElement("w:tab")
+        tab.set(qn("w:val"), "right")
+        tab.set(qn("w:pos"), _RIGHT_TWIPS)
+        tabs_el.append(tab)
+        pPr.append(tabs_el)
 
-    def add_bullet(text: str):
-        p = doc.add_paragraph(style='List Bullet')
-        p.paragraph_format.space_before = Pt(0)
-        p.paragraph_format.space_after = Pt(1)
-        p.paragraph_format.left_indent = Cm(0.5)
-        run = p.add_run(text)
-        run.font.size = Pt(9)
-        run.font.color.rgb = RGBColor(0x37, 0x41, 0x51)
-        return p
+    # ── Helper: add a small vertical gap ──────────────────────────────────
+    def _gap(pt: float = 4):
+        p = _para()
+        p.paragraph_format.space_after = Pt(pt)
 
-    def add_spacer():
-        p = doc.add_paragraph()
-        p.paragraph_format.space_before = Pt(0)
-        p.paragraph_format.space_after = Pt(3)
-
-    # ── Personal Info Block ────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════
+    # NAME
+    # ══════════════════════════════════════════════════════════════════════
     info = cv_data.personal_info
-    add_heading(info.full_name, level=1)
-    if info.target_role:
-        p = doc.add_paragraph()
-        run = p.add_run(info.target_role.upper())
-        run.font.size = Pt(9)
-        run.font.color.rgb = RGBColor(0x64, 0x74, 0x8B)
-        run.font.letter_spacing = Pt(1)
 
-    contact_parts = []
-    if info.email:
-        contact_parts.append(info.email)
-    if info.phone:
-        contact_parts.append(info.phone)
-    if info.location:
-        contact_parts.append(info.location)
-    if info.linkedin:
-        contact_parts.append(info.linkedin)
-    if info.portfolio:
-        contact_parts.append(info.portfolio)
+    p_name = _para()
+    p_name.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = p_name.add_run(info.full_name.upper())
+    r.bold = True
+    r.font.name = "Times New Roman"
+    r.font.size = Pt(16)
+    p_name.paragraph_format.space_after = Pt(2)
+
+    # ══════════════════════════════════════════════════════════════════════
+    # CONTACT LINE
+    # ══════════════════════════════════════════════════════════════════════
+    contact_parts = [p for p in [
+        info.location, info.phone, info.email, info.linkedin, info.portfolio
+    ] if p]
 
     if contact_parts:
-        p = doc.add_paragraph()
-        run = p.add_run("  ·  ".join(contact_parts))
-        run.font.size = Pt(8.5)
-        run.font.color.rgb = RGBColor(0x37, 0x41, 0x51)
+        p_contact = _para()
+        p_contact.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        r = p_contact.add_run(" | ".join(contact_parts))
+        r.font.name = "Times New Roman"
+        r.font.size = Pt(11)
+    p_name.paragraph_format.space_after = Pt(6)
 
-    # ── Professional Summary ───────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════
+    # SECTION HEADING helper
+    # ══════════════════════════════════════════════════════════════════════
+    def _section_heading(title: str):
+        _gap(4)
+        p = _para()
+        r = p.add_run(title.upper())
+        r.bold = True
+        r.font.name = "Times New Roman"
+        r.font.size = Pt(11)
+        _add_bottom_border(p)
+        p.paragraph_format.space_after = Pt(3)
+        return p
+
+    # ══════════════════════════════════════════════════════════════════════
+    # PROFESSIONAL SUMMARY
+    # ══════════════════════════════════════════════════════════════════════
     if cv_data.professional_summary:
-        add_spacer()
-        add_heading("Profile", level=2)
-        p = doc.add_paragraph(cv_data.professional_summary)
-        p.paragraph_format.space_after = Pt(2)
-        for run in p.runs:
-            run.font.size = Pt(9.5)
-            run.font.italic = True
-            run.font.color.rgb = RGBColor(0x37, 0x41, 0x51)
+        _section_heading("Professional Summary")
+        p = _para(cv_data.professional_summary)
+        p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        for r in p.runs:
+            r.font.name = "Times New Roman"
+            r.font.size = Pt(11)
 
-    # ── Work Experience ────────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════
+    # PROFESSIONAL EXPERIENCE
+    # ══════════════════════════════════════════════════════════════════════
     if cv_data.work_experience:
-        add_spacer()
-        add_heading("Experience", level=2)
+        _section_heading("Professional Experience")
+
         for job in cv_data.work_experience:
-            dates = ""
+            # Company + location (bold left)
+            p_co = _para()
+            r_co = p_co.add_run(
+                f"{job.company}, {job.location}" if job.location else job.company
+            )
+            r_co.bold = True
+            r_co.font.name = "Times New Roman"
+            r_co.font.size = Pt(11)
+            p_co.paragraph_format.space_before = Pt(3)
+
+            # Role (italic left) + dates (right-aligned via tab)
+            date_str = ""
             if job.start_date:
-                dates = job.start_date
-                dates += f" – {'Present' if job.is_current else (job.end_date or '')}"
-            add_two_col(job.job_title, dates, left_bold=True)
-            company_str = job.company
-            if job.location:
-                company_str += f"  ·  {job.location}"
-            add_sub(company_str)
+                end = "Present" if job.is_current else (job.end_date or "")
+                date_str = f"{job.start_date} \u2013 {end}"
+
+            p_role = _para()
+            _add_right_tab(p_role)
+            r_role = p_role.add_run(job.job_title)
+            r_role.italic = True
+            r_role.font.name = "Times New Roman"
+            r_role.font.size = Pt(11)
+            if date_str:
+                p_role.add_run("\t")
+                r_date = p_role.add_run(date_str)
+                r_date.font.name = "Times New Roman"
+                r_date.font.size = Pt(11)
+
+            # Bullet points
             for point in job.bullet_points:
-                add_bullet(point)
-            add_spacer()
+                p_b = doc.add_paragraph(style="List Bullet")
+                p_b.paragraph_format.space_before  = Pt(0)
+                p_b.paragraph_format.space_after   = Pt(2)
+                p_b.paragraph_format.left_indent   = Inches(0.25)
+                r_b = p_b.add_run(point)
+                r_b.font.name = "Times New Roman"
+                r_b.font.size = Pt(11)
 
-    # ── Education ──────────────────────────────────────────────────────────
-    if cv_data.education:
-        add_heading("Education", level=2)
-        for edu in cv_data.education:
-            add_two_col(edu.degree, edu.graduation_year or "", left_bold=True)
-            add_sub(edu.institution)
-            meta = []
-            if edu.location:
-                meta.append(edu.location)
-            if edu.honors:
-                meta.append(edu.honors)
-            if meta:
-                add_body("  ·  ".join(meta))
-            add_spacer()
-
-    # ── Skills ─────────────────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════
+    # CORE SKILLS
+    # ══════════════════════════════════════════════════════════════════════
     if cv_data.skills:
-        add_heading("Skills", level=2)
+        _section_heading("Core Skills")
         for group_name, items in cv_data.skills.items():
-            p = doc.add_paragraph()
-            p.paragraph_format.space_before = Pt(0)
-            p.paragraph_format.space_after = Pt(2)
-            label = p.add_run(f"{group_name}: ")
-            label.bold = True
-            label.font.size = Pt(9.5)
-            label.font.color.rgb = RGBColor(0x0F, 0x17, 0x2A)
-            value = p.add_run(", ".join(items))
-            value.font.size = Pt(9.5)
-            value.font.color.rgb = RGBColor(0x37, 0x41, 0x51)
-        add_spacer()
+            p_sk = _para()
+            p_sk.paragraph_format.space_after = Pt(2)
+            r_label = p_sk.add_run(f"{group_name}: ")
+            r_label.bold = True
+            r_label.font.name = "Times New Roman"
+            r_label.font.size = Pt(11)
+            r_val = p_sk.add_run(", ".join(items))
+            r_val.font.name = "Times New Roman"
+            r_val.font.size = Pt(11)
 
-    # ── Projects ───────────────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════
+    # PROJECTS (optional)
+    # ══════════════════════════════════════════════════════════════════════
     if cv_data.projects:
-        add_heading("Projects", level=2)
+        _section_heading("Projects")
         for proj in cv_data.projects:
-            title_line = proj.title
+            p_pt = _para()
+            p_pt.paragraph_format.space_before = Pt(3)
+            r_pt = p_pt.add_run(proj.title)
+            r_pt.bold = True
+            r_pt.font.name = "Times New Roman"
+            r_pt.font.size = Pt(11)
             if proj.link:
-                title_line += f"  —  {proj.link}"
-            add_two_col(title_line, "", left_bold=True)
-            add_body(proj.description)
+                r_lk = p_pt.add_run(f"  \u2014  {proj.link}")
+                r_lk.font.name = "Times New Roman"
+                r_lk.font.size = Pt(11)
+
+            p_desc = _para(proj.description)
+            p_desc.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+            for r in p_desc.runs:
+                r.font.name = "Times New Roman"
+                r.font.size = Pt(11)
+
             if proj.tech_stack:
-                p = doc.add_paragraph()
-                run = p.add_run("Stack: " + ", ".join(proj.tech_stack))
-                run.font.size = Pt(8.5)
-                run.font.color.rgb = RGBColor(0x1D, 0x4E, 0xD8)
-                run.bold = True
-                p.paragraph_format.space_after = Pt(3)
+                p_st = _para()
+                r_stl = p_st.add_run("Stack: ")
+                r_stl.bold = True
+                r_stl.font.name = "Times New Roman"
+                r_stl.font.size = Pt(11)
+                r_stv = p_st.add_run(", ".join(proj.tech_stack))
+                r_stv.font.name = "Times New Roman"
+                r_stv.font.size = Pt(11)
 
-    # ── Certifications ──────────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════
+    # TECHNICAL & INDUSTRY TOOLS
+    # ══════════════════════════════════════════════════════════════════════
+    if cv_data.technical_tools and cv_data.technical_tools.strip():
+        _section_heading("Technical & Industry Tools")
+        p_tools = _para(cv_data.technical_tools.strip())
+        p_tools.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        for r in p_tools.runs:
+            r.font.name = "Times New Roman"
+            r.font.size = Pt(11)
+
+    # ══════════════════════════════════════════════════════════════════════
+    # CERTIFICATIONS
+    # ══════════════════════════════════════════════════════════════════════
     if cv_data.certifications:
-        add_heading("Certifications", level=2)
+        _section_heading("Certifications")
         for cert in cv_data.certifications:
-            # cert is a StructuredCvCertification object; build a readable label
-            if hasattr(cert, "name"):
-                label = cert.name
-                if cert.issuer:
-                    label += f" — {cert.issuer}"
-                if cert.expiration_date:
-                    label += f" (exp. {cert.expiration_date})"
-                elif cert.issue_date:
-                    label += f" ({cert.issue_date})"
-            else:
-                label = str(cert)
-            add_bullet(label)
+            label = cert.name if hasattr(cert, "name") else str(cert)
+            if hasattr(cert, "issuer") and cert.issuer:
+                label += f" | {cert.issuer}"
+            if hasattr(cert, "expiration_date") and cert.expiration_date:
+                label += f" (exp. {cert.expiration_date})"
+            elif hasattr(cert, "issue_date") and cert.issue_date:
+                label += f" ({cert.issue_date})"
 
-    # ── Serialise to bytes ─────────────────────────────────────────────────
+            p_c = doc.add_paragraph(style="List Bullet")
+            p_c.paragraph_format.space_before = Pt(0)
+            p_c.paragraph_format.space_after  = Pt(2)
+            p_c.paragraph_format.left_indent  = Inches(0.25)
+            r_c = p_c.add_run(label)
+            r_c.font.name = "Times New Roman"
+            r_c.font.size = Pt(11)
+
+    # ══════════════════════════════════════════════════════════════════════
+    # EDUCATION
+    # ══════════════════════════════════════════════════════════════════════
+    if cv_data.education:
+        _section_heading("Education")
+        for edu in cv_data.education:
+            parts = [edu.degree, edu.institution]
+            if edu.location:
+                parts.append(edu.location)
+            # Build date range: "Jan 2018 – May 2022" or just "May 2022"
+            if edu.start_date and edu.graduation_year:
+                parts.append(f"{edu.start_date} \u2013 {edu.graduation_year}")
+            elif edu.graduation_year:
+                parts.append(edu.graduation_year)
+            elif edu.start_date:
+                parts.append(edu.start_date)
+            if edu.honors:
+                parts.append(f"GPA: {edu.honors}")
+            p_edu = _para(" | ".join(parts))
+            p_edu.paragraph_format.space_after = Pt(2)
+            for r in p_edu.runs:
+                r.font.name = "Times New Roman"
+                r.font.size = Pt(11)
+
+    # ── Serialise ──────────────────────────────────────────────────────────
     buf = io.BytesIO()
     doc.save(buf)
     buf.seek(0)
     return buf.read()
 
 
-# ── Cloudinary Upload ───────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════
+# DOCX rendering — cover letter
+# ═══════════════════════════════════════════════════════════════════════════
+
+def render_cover_letter_docx_bytes(
+    cv_data: StructuredCvData,
+    letter: StructuredCoverLetter,
+) -> bytes:
+    """
+    Build a DOCX cover letter matching the Ayobami Cover reference:
+
+    - Same header as the resume (name bold centered 16 pt, contact line)
+    - Date line
+    - Salutation
+    - Body paragraphs (justified, 1.15 line spacing)
+    - Sign-off + signatory name
+    """
+    try:
+        from docx import Document as DocxDocument
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.shared import Pt
+    except ImportError as exc:
+        raise RuntimeError(f"python-docx is not installed: {exc}") from exc
+
+    doc = DocxDocument()
+
+    # ── Page geometry: letter, 0.6 in margins ─────────────────────────────
+    for section in doc.sections:
+        section.page_width    = int(8.5  * 914400)
+        section.page_height   = int(11.0 * 914400)
+        section.top_margin    = int(0.6  * 914400)
+        section.bottom_margin = int(0.6  * 914400)
+        section.left_margin   = int(0.6  * 914400)
+        section.right_margin  = int(0.6  * 914400)
+
+    normal_style = doc.styles["Normal"]
+    normal_style.paragraph_format.space_before = Pt(0)
+    normal_style.paragraph_format.space_after  = Pt(0)
+    normal_style.font.name = "Times New Roman"
+    normal_style.font.size = Pt(11)
+
+    def _para(text: str = "") -> object:
+        p = doc.add_paragraph(text)
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after  = Pt(0)
+        return p
+
+    def _blank(pt: float = 12):
+        p = _para()
+        p.paragraph_format.space_after = Pt(pt)
+
+    def _run(paragraph, text: str, size: float = 11, bold=False):
+        r = paragraph.add_run(text)
+        r.font.name = "Times New Roman"
+        r.font.size = Pt(size)
+        r.bold = bold
+        return r
+
+    # ══════════════════════════════════════════════════════════════════════
+    # HEADER (identical to resume)
+    # ══════════════════════════════════════════════════════════════════════
+    info = cv_data.personal_info
+
+    p_name = _para()
+    p_name.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _run(p_name, info.full_name.upper(), size=16, bold=True)
+    p_name.paragraph_format.space_after = Pt(2)
+
+    contact_parts = [p for p in [
+        info.location, info.phone, info.email, info.linkedin, info.portfolio
+    ] if p]
+    if contact_parts:
+        p_contact = _para()
+        p_contact.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        _run(p_contact, " | ".join(contact_parts))
+
+    _blank(20)  # spacing below header
+
+    # ══════════════════════════════════════════════════════════════════════
+    # DATE
+    # ══════════════════════════════════════════════════════════════════════
+    if letter.date:
+        p_date = _para()
+        _run(p_date, letter.date)
+        _blank(18)
+
+    # ══════════════════════════════════════════════════════════════════════
+    # SALUTATION
+    # ══════════════════════════════════════════════════════════════════════
+    p_sal = _para()
+    _run(p_sal, letter.salutation or "Dear Hiring Manager,")
+    _blank(12)
+
+    # ══════════════════════════════════════════════════════════════════════
+    # BODY PARAGRAPHS
+    # ══════════════════════════════════════════════════════════════════════
+    for para_text in letter.body_paragraphs:
+        p_body = _para()
+        p_body.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        _run(p_body, para_text)
+        p_body.paragraph_format.line_spacing = Pt(14)  # ~1.27× at 11 pt
+        p_body.paragraph_format.space_after  = Pt(12)
+
+    # ══════════════════════════════════════════════════════════════════════
+    # SIGN-OFF
+    # ══════════════════════════════════════════════════════════════════════
+    _blank(18)
+    p_so = _para()
+    _run(p_so, letter.sign_off or "Warm regards,")
+    p_so.paragraph_format.space_after = Pt(4)
+
+    p_sig = _para()
+    _run(p_sig, letter.signatory_name or info.full_name)
+
+    # ── Serialise ──────────────────────────────────────────────────────────
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf.read()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Cloudinary upload helper
+# ═══════════════════════════════════════════════════════════════════════════
 
 def upload_to_cloudinary(
     file_bytes: bytes,
@@ -316,19 +536,20 @@ def upload_to_cloudinary(
     resource_type: str = "raw",
     format: str = "pdf",
 ) -> dict:
-    """Upload file bytes to Cloudinary and return the response dict."""
-    response = cloudinary.uploader.upload(
+    """Upload file bytes to Cloudinary and return the full response dict."""
+    return cloudinary.uploader.upload(
         file_bytes,
         public_id=public_id,
         resource_type=resource_type,
         format=format,
         overwrite=True,
-        access_mode="public",   # Ensure the secure_url is publicly accessible without auth
+        access_mode="public",
     )
-    return response
 
 
-# ── Orchestration Service ───────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════
+# Orchestration service
+# ═══════════════════════════════════════════════════════════════════════════
 
 async def render_cv_documents_service(
     submission_id: str,
@@ -337,15 +558,22 @@ async def render_cv_documents_service(
     db: Session,
 ):
     """
-    Admin-triggered rendering pipeline:
-    1. Verify submission & generation record exist.
-    2. Deserialise StructuredCvData from stored JSON.
-    3. Render requested formats (PDF / DOCX).
-    4. Upload each file to Cloudinary.
-    5. Save Document records with version increments.
-    6. Return list of created DocumentResponse dicts.
+    Admin-triggered rendering pipeline.
+
+    Steps:
+    1. Validate submission + RBAC.
+    2. Fetch AiGeneration record.
+    3. Deserialise StructuredCvData (and StructuredCoverLetter if requested).
+    4. Render each requested format (pdf / docx).
+    5. Upload to Cloudinary.
+    6. Persist Document records.
+    7. Return list of DocumentResponse-compatible dicts.
+
+    document_kind controls which document is rendered:
+      'resume'       → cv resume using cv_default.html / render_docx_bytes
+      'cover_letter' → cover letter using cover_letter.html / render_cover_letter_docx_bytes
     """
-    # 1. Validate submission
+    # ── 1. Validate submission ─────────────────────────────────────────────
     submission = db.query(Submission).filter(Submission.id == submission_id).first()
     if not submission:
         return error_response(
@@ -353,7 +581,6 @@ async def render_cv_documents_service(
             message="Submission not found",
         )
 
-    # Sub-admin RBAC: can only render for assigned submissions
     if (
         current_admin.role == AdminRole.SUB_ADMIN.value
         and submission.assigned_to_id != current_admin.id
@@ -363,7 +590,7 @@ async def render_cv_documents_service(
             message="You are not assigned to this submission",
         )
 
-    # 2. Fetch generation record
+    # ── 2. Fetch generation record ─────────────────────────────────────────
     generation = db.query(AiGeneration).filter(
         AiGeneration.id == payload.ai_generation_id,
         AiGeneration.submission_id == submission_id,
@@ -374,61 +601,104 @@ async def render_cv_documents_service(
             message="AI generation record not found for this submission",
         )
 
-    # 3. Recover StructuredCvData from the generation record
-    #    (stored as JSON in ai_generation.structured_cv_json)
-    if not hasattr(generation, "structured_cv_json") or not generation.structured_cv_json:
+    # ── 3. Deserialise structured data ─────────────────────────────────────
+    document_kind = getattr(payload, "document_kind", "resume")
+
+    if not generation.structured_cv_json:
         return error_response(
             status_code=status.HTTP_400_BAD_REQUEST,
-            message="No structured CV data found in this generation record. Please re-generate the CV first.",
+            message=(
+                "No structured CV data found in this generation record. "
+                "Please re-generate the CV first."
+            ),
         )
 
     try:
         cv_data = StructuredCvData.model_validate(generation.structured_cv_json)
-    except Exception as e:
+    except Exception as exc:
         return error_response(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            message=f"Stored CV data is invalid: {e}",
+            message=f"Stored CV data is invalid: {exc}",
         )
 
-    # 4. Render HTML once (shared for PDF)
-    html = render_cv_to_html(cv_data)
+    cover_letter: Optional[StructuredCoverLetter] = None
+    if document_kind == "cover_letter":
+        if not generation.cover_letter_json:
+            return error_response(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                message=(
+                    "No cover letter data found in this generation record. "
+                    "Please re-generate to include a cover letter."
+                ),
+            )
+        try:
+            cover_letter = StructuredCoverLetter.model_validate(
+                generation.cover_letter_json
+            )
+        except Exception as exc:
+            return error_response(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                message=f"Stored cover letter data is invalid: {exc}",
+            )
 
-    safe_name = (submission.client.first_name + "_" + submission.client.last_name).replace(" ", "_") \
-        if submission.client else f"submission_{submission_id[:8]}"
+    # ── File naming — client first name only (e.g. "Roland.pdf") ──────────
+    client_first = (
+        submission.client.first_name.strip()
+        if submission.client and submission.client.first_name
+        else f"document_{submission_id[:8]}"
+    )
+    # Append kind suffix so resume and cover letter coexist without collision
+    kind_suffix = "" if document_kind == "resume" else "_cover_letter"
 
-    created_docs = []
+    # ── Pre-render HTML once (shared between pdf render and potential reuse)
+    if document_kind == "cover_letter":
+        html = render_cover_letter_to_html(cv_data, cover_letter)
+    else:
+        html = render_cv_to_html(cv_data)
+
+    # ── 4-6. Render → upload → persist each requested format ──────────────
     formats = [f.lower().strip() for f in payload.formats]
+    created_docs = []
 
     for fmt in formats:
         if fmt not in ("pdf", "docx"):
             continue
 
-        # Determine next version
-        existing_version = (
+        # Version: how many docs of this kind+format already exist
+        existing_count = (
             db.query(Document)
             .filter(
                 Document.submission_id == submission_id,
                 Document.file_type == fmt,
+                Document.document_kind == document_kind,
             )
             .count()
         )
-        version = existing_version + 1
-        file_name = f"{safe_name}_CV_v{version}.{fmt}"
-        cloudinary_public_id = f"ai_cv_generator/documents/{submission_id}/{fmt}_v{version}"
+        version = existing_count + 1
 
+        file_name = f"{client_first}{kind_suffix}.{fmt}"
+        cloudinary_public_id = (
+            f"ai_cv_generator/documents/{submission_id}"
+            f"/{document_kind}_{fmt}_v{version}"
+        )
+
+        # ── Render ────────────────────────────────────────────────────────
         try:
             if fmt == "pdf":
                 file_bytes = render_pdf_bytes(html)
             else:
-                file_bytes = render_docx_bytes(cv_data)
-        except Exception as e:
-            logger.error(f"Rendering {fmt.upper()} failed: {e}")
+                if document_kind == "cover_letter":
+                    file_bytes = render_cover_letter_docx_bytes(cv_data, cover_letter)
+                else:
+                    file_bytes = render_docx_bytes(cv_data)
+        except Exception as exc:
+            logger.error(f"Rendering {fmt.upper()} ({document_kind}) failed: {exc}")
             return error_response(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                message=f"Failed to render {fmt.upper()} document: {str(e)}",
+                message=f"Failed to render {fmt.upper()} document: {exc}",
             )
 
-        # Upload to Cloudinary
+        # ── Upload ────────────────────────────────────────────────────────
         try:
             cloud_resp = upload_to_cloudinary(
                 file_bytes=file_bytes,
@@ -436,16 +706,16 @@ async def render_cv_documents_service(
                 resource_type="raw",
                 format=fmt,
             )
-            file_url = cloud_resp["secure_url"]
+            file_url       = cloud_resp["secure_url"]
             cloud_public_id = cloud_resp["public_id"]
-        except Exception as e:
-            logger.error(f"Cloudinary upload failed: {e}")
+        except Exception as exc:
+            logger.error(f"Cloudinary upload failed: {exc}")
             return error_response(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                message=f"File upload failed: {str(e)}",
+                message=f"File upload failed: {exc}",
             )
 
-        # Save document record
+        # ── Persist ───────────────────────────────────────────────────────
         doc = Document(
             submission_id=submission_id,
             ai_generation_id=generation.id,
@@ -453,31 +723,40 @@ async def render_cv_documents_service(
             file_name=file_name,
             public_id=cloud_public_id,
             file_type=fmt,
+            document_kind=document_kind,
             version=version,
         )
         db.add(doc)
         db.flush()
 
         created_docs.append({
-            "id": doc.id,
-            "submission_id": doc.submission_id,
+            "id":               doc.id,
+            "submission_id":    doc.submission_id,
             "ai_generation_id": doc.ai_generation_id,
-            "file_name": doc.file_name,
-            "file_url": doc.file_url,
-            "public_id": doc.public_id,
-            "file_type": doc.file_type,
-            "version": doc.version,
-            "created_at": doc.created_at,
+            "file_name":        doc.file_name,
+            "file_url":         doc.file_url,
+            "public_id":        doc.public_id,
+            "file_type":        doc.file_type,
+            "document_kind":    doc.document_kind,
+            "version":          doc.version,
+            "created_at":       doc.created_at,
         })
 
     db.commit()
 
     return success_response(
         status_code=status.HTTP_201_CREATED,
-        message=f"CV rendered successfully in {len(created_docs)} format(s)",
+        message=(
+            f"{document_kind.replace('_', ' ').title()} rendered successfully "
+            f"in {len(created_docs)} format(s)"
+        ),
         data=created_docs,
     )
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Document listing / download services
+# ═══════════════════════════════════════════════════════════════════════════
 
 async def list_submission_documents_service(
     submission_id: str,
@@ -487,12 +766,15 @@ async def list_submission_documents_service(
     """Returns all document records for a given submission."""
     submission = db.query(Submission).filter(Submission.id == submission_id).first()
     if not submission:
-        return error_response(status_code=status.HTTP_404_NOT_FOUND, message="Submission not found")
+        return error_response(
+            status_code=status.HTTP_404_NOT_FOUND,
+            message="Submission not found",
+        )
 
     docs = (
         db.query(Document)
         .filter(Document.submission_id == submission_id)
-        .order_by(Document.file_type, Document.version)
+        .order_by(Document.document_kind, Document.file_type, Document.version)
         .all()
     )
 
@@ -501,15 +783,16 @@ async def list_submission_documents_service(
         message="Documents retrieved successfully",
         data=[
             {
-                "id": d.id,
-                "submission_id": d.submission_id,
+                "id":               d.id,
+                "submission_id":    d.submission_id,
                 "ai_generation_id": d.ai_generation_id,
-                "file_name": d.file_name,
-                "file_url": d.file_url,
-                "public_id": d.public_id,
-                "file_type": d.file_type,
-                "version": d.version,
-                "created_at": d.created_at,
+                "file_name":        d.file_name,
+                "file_url":         d.file_url,
+                "public_id":        d.public_id,
+                "file_type":        d.file_type,
+                "document_kind":    d.document_kind,
+                "version":          d.version,
+                "created_at":       d.created_at,
             }
             for d in docs
         ],
@@ -522,9 +805,8 @@ async def download_document_service(
     db: Session,
 ):
     """
-    Returns the document record and a short-lived signed Cloudinary URL.
-    The controller redirects the client directly to that URL, avoiding a
-    server-side proxy fetch that breaks on authenticated/private uploads.
+    Returns the Document record and a 1-hour signed Cloudinary URL.
+    The controller issues a 302 redirect to that URL.
     """
     doc = db.query(Document).filter(
         Document.id == document_id,
@@ -537,19 +819,16 @@ async def download_document_service(
         )
 
     try:
-        # Generate a signed URL valid for 1 hour — works regardless of the
-        # upload's access_mode (public or authenticated).
         signed_url = cloudinary.utils.cloudinary_url(
             doc.public_id,
             resource_type="raw",
             sign_url=True,
             secure=True,
-            expires_at=int(__import__("time").time()) + 3600,
+            expires_at=int(time.time()) + 3600,
         )[0]
-    except Exception as e:
-        logger.error(f"Failed to generate signed Cloudinary URL: {e}")
-        # Fall back to the stored URL — will work for public uploads
-        signed_url = doc.file_url
+    except Exception as exc:
+        logger.error(f"Failed to generate signed Cloudinary URL: {exc}")
+        signed_url = doc.file_url   # fall back to stored URL
 
     return doc, signed_url
 
@@ -557,10 +836,10 @@ async def download_document_service(
 async def client_download_document_service(
     submission_id: str,
     document_id: str,
-    client_submission,  # The submission validated by client token
+    client_submission,
     db: Session,
 ):
-    """Client-facing download — validates the submission belongs to the calling client."""
+    """Client-facing download — confirms the submission belongs to the caller."""
     if client_submission.id != submission_id:
         return None, error_response(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -588,7 +867,7 @@ async def list_client_documents_service(
     docs = (
         db.query(Document)
         .filter(Document.submission_id == submission_id)
-        .order_by(Document.file_type, Document.version)
+        .order_by(Document.document_kind, Document.file_type, Document.version)
         .all()
     )
 
@@ -597,17 +876,17 @@ async def list_client_documents_service(
         message="Documents retrieved successfully",
         data=[
             {
-                "id": d.id,
-                "submission_id": d.submission_id,
+                "id":               d.id,
+                "submission_id":    d.submission_id,
                 "ai_generation_id": d.ai_generation_id,
-                "file_name": d.file_name,
-                "file_url": d.file_url,
-                "public_id": d.public_id,
-                "file_type": d.file_type,
-                "version": d.version,
-                "created_at": str(d.created_at),
+                "file_name":        d.file_name,
+                "file_url":         d.file_url,
+                "public_id":        d.public_id,
+                "file_type":        d.file_type,
+                "document_kind":    d.document_kind,
+                "version":          d.version,
+                "created_at":       str(d.created_at),
             }
             for d in docs
         ],
     )
-

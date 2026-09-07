@@ -14,7 +14,12 @@ class AiGeneration(BaseModel):
     cost = Column(Float, default=0.0, nullable=False)
     status = Column(String, default=AiGenerationStatus.SUCCESS.value, nullable=False)
     error_message = Column(String, nullable=True)
-    structured_cv_json = Column(JSON, nullable=True)  # Stores StructuredCvData dict for document rendering
+
+    # Structured resume data — used by the PDF/DOCX resume renderer
+    structured_cv_json = Column(JSON, nullable=True)
+
+    # Structured cover letter data — used by the PDF/DOCX cover letter renderer
+    cover_letter_json = Column(JSON, nullable=True)
 
     # Relationships
     submission = relationship("Submission", backref="ai_generations")

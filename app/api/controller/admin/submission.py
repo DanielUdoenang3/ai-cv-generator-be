@@ -4,8 +4,9 @@ from sqlalchemy.orm import Session
 
 from app.utils.database import get_db
 from app.models.admins import Admin
-from app.schema.submission import SubmissionStatusUpdate, SubmissionAssign
+from app.schema.submission import SubmissionStatusUpdate, SubmissionAssign, UpdateSavedResumeText, UpdateJobDescription
 from app.schema.chat import MessageCreate, MessageEdit
+from app.schema.ai import TailorResumeRequest
 from app.services import get_current_admin, get_current_super_admin
 from app.services.admin.submission import (
     get_all_submissions,
@@ -18,7 +19,10 @@ from app.services.admin.submission import (
     edit_admin_message,
     delete_admin_message,
     mark_admin_messages_read,
+    save_resume_text,
+    update_job_description,
 )
+from app.services.ai_service import tailor_resume_service
 
 
 async def get_all_submissions_controller(
@@ -169,6 +173,59 @@ async def mark_admin_read_controller(
     """Mark all unread client messages as read."""
     return await mark_admin_messages_read(
         submission_id=submission_id,
+        current_admin=current_admin,
+        db=db,
+    )
+
+
+# ── Tailor Resume — new unified endpoints ─────────────────────────────────
+
+async def save_resume_text_controller(
+    submission_id: str,
+    data: UpdateSavedResumeText,
+    current_admin: Admin = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """Persist the candidate's resume text against the submission (once and done)."""
+    return await save_resume_text(
+        submission_id=submission_id,
+        saved_resume_text=data.saved_resume_text,
+        current_admin=current_admin,
+        db=db,
+    )
+
+
+async def update_job_description_controller(
+    submission_id: str,
+    data: UpdateJobDescription,
+    current_admin: Admin = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """Update or clear the job description for the current tailoring cycle."""
+    return await update_job_description(
+        submission_id=submission_id,
+        job_description=data.job_description,
+        current_admin=current_admin,
+        db=db,
+    )
+
+
+async def tailor_resume_controller(
+    submission_id: str,
+    payload: TailorResumeRequest,
+    current_admin: Admin = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Unified Tailor Resume action.
+
+    Generates both resume and cover letter in a single LLM call, renders
+    all 4 files (resume PDF, resume DOCX, cover letter PDF, cover letter DOCX),
+    uploads to Cloudinary, and returns all download links in one response.
+    """
+    return await tailor_resume_service(
+        submission_id=submission_id,
+        payload=payload,
         current_admin=current_admin,
         db=db,
     )
