@@ -1,10 +1,16 @@
+import httpx
 from fastapi import Depends, Header, Response
-from fastapi.responses import RedirectResponse
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.utils.database import get_db
 from app.models.submissions import Submission
 from app.services.document_service import download_document_service, list_client_documents_service
+
+_MIME_TYPES = {
+    "pdf": "application/pdf",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
 
 
 async def client_list_documents_controller(
@@ -55,5 +61,21 @@ async def client_download_document_controller(
     if doc is None:
         return result  # error_response JSON
 
-    # result is now a signed URL — redirect the client directly to Cloudinary
-    return RedirectResponse(url=result, status_code=302)
+    file_ext = (doc.file_type or "pdf").lower()
+    content_type = _MIME_TYPES.get(file_ext, "application/octet-stream")
+    filename = f"{doc.document_kind or 'document'}.{file_ext}"
+
+    async def _stream():
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            async with client.stream("GET", result) as resp:
+                resp.raise_for_status()
+                async for chunk in resp.aiter_bytes(chunk_size=8192):
+                    yield chunk
+
+    return StreamingResponse(
+        _stream(),
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )

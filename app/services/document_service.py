@@ -805,8 +805,14 @@ async def download_document_service(
     db: Session,
 ):
     """
-    Returns the Document record and a 1-hour signed Cloudinary URL.
-    The controller issues a 302 redirect to that URL.
+    Returns the Document record and an authenticated Cloudinary private-download
+    URL (via the Admin API).  The controller streams this back to the client.
+
+    We use ``cloudinary.utils.private_download_url()`` rather than the CDN
+    delivery URL (``cloudinary_url(..., sign_url=True)``).  The CDN delivery
+    URL returns 401 on Cloudinary's free plan for raw assets; the Admin API
+    download URL is always authenticated with the API key/secret and works
+    regardless of delivery settings.
     """
     doc = db.query(Document).filter(
         Document.id == document_id,
@@ -819,18 +825,17 @@ async def download_document_service(
         )
 
     try:
-        signed_url = cloudinary.utils.cloudinary_url(
+        download_url = cloudinary.utils.private_download_url(
             doc.public_id,
+            doc.file_type,          # "pdf" or "docx"
             resource_type="raw",
-            sign_url=True,
-            secure=True,
-            expires_at=int(time.time()) + 3600,
-        )[0]
+            type="upload",
+        )
     except Exception as exc:
-        logger.error(f"Failed to generate signed Cloudinary URL: {exc}")
-        signed_url = doc.file_url   # fall back to stored URL
+        logger.error(f"Failed to generate Cloudinary download URL: {exc}")
+        download_url = doc.file_url   # last-resort fallback
 
-    return doc, signed_url
+    return doc, download_url
 
 
 async def client_download_document_service(
