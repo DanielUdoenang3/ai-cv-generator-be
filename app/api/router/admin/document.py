@@ -3,6 +3,7 @@ from app.api.controller.admin.document import (
     render_cv_documents_controller,
     list_documents_controller,
     download_document_controller,
+    proxy_attachment_controller,
 )
 
 admin_document_router = APIRouter(tags=["Admin CV Documents"])
@@ -26,4 +27,16 @@ admin_document_router.add_api_route(
     download_document_controller,
     methods=["GET"],
     summary="Download a generated CV document as a binary file (Admin only)",
+)
+
+admin_document_router.add_api_route(
+    "/attachments/proxy",
+    proxy_attachment_controller,
+    methods=["GET"],
+    summary="Proxy a Cloudinary chat attachment through the backend (Admin only)",
+    description=(
+        "Pass the Cloudinary public_id as a query param. "
+        "The backend fetches the file server-side and streams it inline, "
+        "bypassing Cloudinary CDN delivery restrictions."
+    ),
 )

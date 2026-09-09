@@ -895,3 +895,54 @@ async def list_client_documents_service(
             for d in docs
         ],
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ATTACHMENT PROXY
+# ═══════════════════════════════════════════════════════════════════════════
+
+_ATTACHMENT_MIME: dict[str, str] = {
+    "pdf":  "application/pdf",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "doc":  "application/msword",
+    "txt":  "text/plain",
+    "rtf":  "application/rtf",
+    "png":  "image/png",
+    "jpg":  "image/jpeg",
+    "jpeg": "image/jpeg",
+    "webp": "image/webp",
+    "gif":  "image/gif",
+}
+
+
+async def proxy_attachment_service(public_id: str):
+    """
+    Fetches a Cloudinary asset by public_id and returns (download_url, ext).
+
+    Uses private_download_url (Admin API) so the file is always accessible
+    regardless of Cloudinary plan delivery restrictions.  The caller should
+    stream the result back to the client.
+
+    Returns (download_url: str, ext: str) on success, or raises ValueError
+    if the public_id looks unsafe.
+    """
+    # Basic sanity-check — public_ids should not contain path traversal sequences
+    if ".." in public_id or public_id.startswith("/"):
+        raise ValueError(f"Invalid public_id: {public_id!r}")
+
+    # Infer the file extension from the public_id (e.g. "folder/name.pdf" → "pdf")
+    ext = public_id.rsplit(".", 1)[-1].lower() if "." in public_id.split("/")[-1] else "bin"
+
+    # Chat attachments can be images (resource_type="image") or documents
+    # (resource_type="raw").  We try "raw" first; if that 401s we fall back to
+    # "image" so that genuine image attachments still work.
+    resource_type = "image" if ext in {"png", "jpg", "jpeg", "webp", "gif", "svg"} else "raw"
+
+    download_url = cloudinary.utils.private_download_url(
+        public_id,
+        ext,
+        resource_type=resource_type,
+        type="upload",
+    )
+
+    return download_url, ext

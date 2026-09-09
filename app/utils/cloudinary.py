@@ -82,9 +82,17 @@ async def upload_file_to_cloudinary(
     original_filename = file.filename or "uploaded_file"
 
     try:
-        resource_type = "auto"
-        if category == "document" and not original_filename.lower().endswith(".pdf"):
+        # Documents (PDF, DOCX, TXT, etc.) must be uploaded as "raw" so
+        # Cloudinary stores them as-is and returns a working download URL.
+        # Using "auto" for PDFs causes Cloudinary to treat them as images
+        # (resource_type="image"), which produces an image/upload CDN URL
+        # that returns 401 when accessed directly.
+        if category == "document":
             resource_type = "raw"
+        elif category == "image":
+            resource_type = "image"
+        else:
+            resource_type = "auto"  # video / audio
 
         response = cloudinary.uploader.upload(
             file.file,
