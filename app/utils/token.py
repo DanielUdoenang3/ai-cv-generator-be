@@ -80,3 +80,43 @@ def decode_reset_token(token: str) -> str | None:
         return None
     except jwt.JWTError:
         return None
+
+
+# Invitation tokens expire in 7 days
+INVITE_TOKEN_EXPIRES_DAYS = 7
+
+
+def create_invite_token(email: str, role: str) -> tuple[str, datetime]:
+    """
+    Create a signed JWT for an admin invitation.
+    Returns (token, expires_at) so the caller can persist expires_at in the DB.
+    """
+    expires_at = datetime.now(timezone.utc) + timedelta(days=INVITE_TOKEN_EXPIRES_DAYS)
+    payload = {
+        "sub": email,
+        "role": role,
+        "type": "admin_invite",
+        "exp": expires_at,
+    }
+    token = jwt.encode(payload, SECRET_KEY, algorithm=JWT_ALGORITHM)
+    return token, expires_at
+
+
+def decode_invite_token(token: str) -> dict | None:
+    """
+    Decode and validate an admin invitation token.
+    Returns {"email": ..., "role": ...} on success, None if invalid or expired.
+    """
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        if payload.get("type") != "admin_invite":
+            return None
+        email: str = payload.get("sub")
+        role: str = payload.get("role")
+        if not email or not role:
+            return None
+        return {"email": email, "role": role}
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.JWTError:
+        return None

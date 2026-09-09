@@ -60,3 +60,49 @@ async def send_reset_password_email(
     except Exception as e:
         print(f"[email_services] Failed to send reset password email to {to_email}: {e}")
         return False
+
+
+async def send_admin_invite_email(
+    to_email: str,
+    inviter_name: str,
+    role: str,
+    invite_link: str,
+    expires_at: datetime,
+) -> bool:
+    """
+    Send an admin invitation email to the prospective admin.
+
+    Returns True on success, False on failure (caller decides how to handle).
+    """
+    try:
+        template = env.get_template("admin_invite.html")
+
+        role_display = role.replace("_", " ").title()
+
+        if expires_at:
+            utc_expires = expires_at.astimezone(timezone.utc)
+            expires_at_str = utc_expires.strftime("%B %d, %Y at %I:%M %p UTC")
+        else:
+            expires_at_str = "7 days from now"
+
+        html_body = template.render(
+            inviter_name=inviter_name,
+            role=role_display,
+            invite_link=invite_link,
+            expires_at=expires_at_str,
+            year=date.today().year,
+        )
+
+        params: resend.Emails.SendParams = {
+            "from": EMAIL_CRED,
+            "to": [to_email],
+            "subject": f"You've been invited to join MangoHR as {role_display}",
+            "html": html_body,
+        }
+
+        resend.Emails.send(params)
+        return True
+
+    except Exception as e:
+        print(f"[email_services] Failed to send invite email to {to_email}: {e}")
+        return False

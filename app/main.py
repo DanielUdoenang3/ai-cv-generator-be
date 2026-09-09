@@ -10,6 +10,7 @@ from app.api.router.admin.prompt import admin_prompt_router
 from app.api.router.admin.ai import admin_ai_router
 from app.api.router.admin.ws import admin_ws_router
 from app.api.router.admin.document import admin_document_router
+from app.api.router.admin.invitation import admin_invitation_router
 from app.api.router.client.submission import client_router
 from app.api.router.client.upload import upload_router
 from app.api.router.client.ws import client_ws_router
@@ -48,6 +49,7 @@ app.include_router(admin_prompt_router, prefix="/api/v1/admin")
 app.include_router(admin_ai_router, prefix="/api/v1/admin")
 app.include_router(admin_ws_router, prefix="/api/v1/admin")   # WS: /api/v1/admin/submissions/{id}/ws
 app.include_router(admin_document_router, prefix="/api/v1/admin")
+app.include_router(admin_invitation_router, prefix="/api/v1/admin")
 app.include_router(client_router, prefix="/api/v1")
 app.include_router(upload_router, prefix="/api/v1/public")
 app.include_router(client_ws_router, prefix="/api/v1")        # WS: /api/v1/public/submissions/{id}/ws
